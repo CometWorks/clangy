@@ -108,6 +108,25 @@ class ClangyClient(discord.Client):
             # One bad message must not take the gateway handler down
             log.exception("Failed to handle message %s", message.id)
 
+    async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent) -> None:
+        assert self.core is not None and self.user is not None
+        # Clangy edits its progress messages every minute; skip those and anything outside its threads
+        author = payload.data.get("author", {}).get("id")
+        if not self.core.knows(payload.message_id) or author is None or int(author) == self.user.id:
+            return
+        if "content" not in payload.data:
+            return  # embeds being added, not an edit by the user
+        self.core.on_edit(incoming(payload.message, self.user))
+
+    async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
+        assert self.core is not None
+        self.core.on_delete(payload.message_id)
+
+    async def on_raw_bulk_message_delete(self, payload: discord.RawBulkMessageDeleteEvent) -> None:
+        assert self.core is not None
+        for message_id in payload.message_ids:
+            self.core.on_delete(message_id)
+
     async def close(self) -> None:
         if self.core is not None:
             await self.core.close()

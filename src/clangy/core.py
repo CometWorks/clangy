@@ -72,10 +72,19 @@ class Chat(Protocol):
 
 
 class PendingMessage(BaseModel):
+    id: int
     author: str
     text: str
     created: datetime
     attachments: list[str] = Field(default_factory=list)
+
+
+class KnownMessage(BaseModel):
+    """A message of the conversation, kept to notice edits and deletions."""
+
+    author: str
+    text: str
+    created: datetime
 
 
 Status = Literal["idle", "queued", "running", "backend_error", "failed"]
@@ -93,6 +102,7 @@ class Conversation(BaseModel):
     retries: int = 0
     runs: int = 0
     host_notes: list[str] = Field(default_factory=list)
+    known: dict[int, KnownMessage] = Field(default_factory=dict)
     sent_files: list[str] = Field(default_factory=list)
     """Work folder paths of the files already sent, each file goes out at most once."""
 
@@ -141,6 +151,12 @@ class Clangy:
         self.conversations: dict[int, Conversation] = {}
         self._workers: dict[int, asyncio.Task] = {}
         self._outboxes: dict[int, Outbox] = {}
+        self._message_threads: dict[int, int] = {}
+        """Message id to conversation, for edits and deletions."""
+        self._in_run: dict[int, set[int]] = {}
+        """Messages the running answer of each conversation works from."""
+        self._first_answer: dict[int, asyncio.Task] = {}
+        """Delayed first answers to new forum threads."""
         self._wake: dict[int, bool] = {}
         self._next_backend = 0
         self._http: aiohttp.ClientSession | None = None
@@ -157,7 +173,7 @@ class Clangy:
         return self._http
 
     async def close(self) -> None:
-        for task in self._workers.values():
+        for task in [*self._workers.values(), *self._first_answer.values()]:
             task.cancel()
         if self._http is not None:
             await self._http.close()
@@ -183,6 +199,7 @@ class Clangy:
         for path in sorted((self.config.data_dir / "conversations").glob("*/state.json")):
             conv = Conversation.model_validate_json(path.read_text())
             self.conversations[conv.thread_id] = conv
+            self._message_threads.update(dict.fromkeys(conv.known, conv.thread_id))
             if conv.status not in ("queued", "running"):
                 continue
             self._restore_session(conv)
@@ -199,33 +216,107 @@ class Clangy:
         if msg.from_self:
             return
         conv = self.conversations.get(msg.channel_id)
-        trigger = msg.mentions_bot
+        new = conv is None
         if conv is None:
-            conv, trigger = await self._start_conversation(msg)
-            if conv is None:
-                return
-        channel = self.config.channel(conv.channel_id)
-        if channel is not None and channel.mode == "record":
-            self._record(conv, msg)
+            conv = await self._start_conversation(msg)
+        channel = self.config.channel(conv.channel_id) if conv else None
+        if conv is None or channel is None:
+            return
+        if channel.mode == "record":
+            files = "".join(f"\n- attachment: {a.filename}" for a in msg.attachments)
+            self._record(conv, msg.author, msg.created, msg.text + files, msg.thread_name)
+        conv.known[msg.id] = KnownMessage(author=msg.author, text=msg.text, created=msg.created)
+        self._message_threads[msg.id] = conv.thread_id
         conv.pending.append(await self._pending(conv, msg))
-        if trigger:
+        if msg.mentions_bot:
+            self._cancel_first_answer(conv)
             conv.retries = 0
             self.trigger(conv)
+        elif new and channel.initial_response or conv.thread_id in self._first_answer:
+            self._schedule_first_answer(conv, channel.initial_delay)
         self.save(conv)
 
-    async def _start_conversation(self, msg: IncomingMessage) -> tuple[Conversation | None, bool]:
+    async def _start_conversation(self, msg: IncomingMessage) -> Conversation | None:
         """Starts a conversation for new forum posts and for mentions in mention-mode channels."""
         if msg.parent_id is not None:
             channel = self.config.channel(msg.parent_id)
             if channel is None or channel.mode == "mention" or not msg.starts_thread:
-                return None, False
-            return self._new_conversation(msg.channel_id, channel, msg.guild_id), channel.initial_response
+                return None
+            return self._new_conversation(msg.channel_id, channel, msg.guild_id)
         channel = self.config.channel(msg.channel_id)
         if channel is None or channel.mode != "mention" or not msg.mentions_bot:
-            return None, False
+            return None
         name = " ".join(msg.text.split())[:90] or f"Question from {msg.author}"
         thread_id = await self.chat.create_thread(msg.channel_id, msg.id, name)
-        return self._new_conversation(thread_id, channel, msg.guild_id), True
+        return self._new_conversation(thread_id, channel, msg.guild_id)
+
+    def _schedule_first_answer(self, conv: Conversation, delay: float) -> None:
+        """(Re)starts the wait before the first answer to a new forum thread; any activity restarts it."""
+        self._cancel_first_answer(conv)
+        if delay <= 0:
+            self.trigger(conv)
+            return
+        self._first_answer[conv.thread_id] = asyncio.create_task(self._first_answer_after(conv, delay))
+
+    def _cancel_first_answer(self, conv: Conversation) -> None:
+        if task := self._first_answer.pop(conv.thread_id, None):
+            task.cancel()
+
+    async def _first_answer_after(self, conv: Conversation, delay: float) -> None:
+        await asyncio.sleep(delay)
+        del self._first_answer[conv.thread_id]
+        if conv.pending:
+            self.trigger(conv)
+
+    def _queued(self, conv: Conversation, message_id: int) -> PendingMessage | None:
+        """The message if it waits for the next run; None once a run took it or the model saw it."""
+        if message_id in self._in_run.get(conv.thread_id, set()):
+            return None
+        return next((m for m in conv.pending if m.id == message_id), None)
+
+    def knows(self, message_id: int) -> bool:
+        """Whether the message belongs to one of Clangy's conversations."""
+        return message_id in self._message_threads
+
+    def on_edit(self, msg: IncomingMessage) -> None:
+        """Applies an edit to the next run; a running answer keeps working from the old text."""
+        conv = self.conversations.get(self._message_threads.get(msg.id, 0))
+        known = conv.known.get(msg.id) if conv else None
+        if conv is None or known is None or msg.from_self or known.text == msg.text:
+            return
+        known.text = msg.text
+        if queued := self._queued(conv, msg.id):
+            queued.text = msg.text
+        else:
+            conv.host_notes.append(
+                f"[host] {known.author} edited their message from {known.created:%Y-%m-%d %H:%M} UTC, "
+                f"it now reads: {msg.text}"
+            )
+        self._after_change(conv, known, f"edited a message, it now reads: {msg.text}")
+
+    def on_delete(self, message_id: int) -> None:
+        """Applies a deletion to the next run; a running answer keeps working from the old text."""
+        conv = self.conversations.get(self._message_threads.pop(message_id, 0))
+        known = conv.known.pop(message_id, None) if conv else None
+        if conv is None or known is None:
+            return
+        if queued := self._queued(conv, message_id):
+            conv.pending.remove(queued)
+        else:
+            excerpt = " ".join(known.text.split())[:200]
+            conv.host_notes.append(
+                f"[host] {known.author} deleted their message from {known.created:%Y-%m-%d %H:%M} UTC "
+                f'("{excerpt}"). Disregard it.'
+            )
+        self._after_change(conv, known, f"deleted their message from {known.created:%Y-%m-%d %H:%M} UTC")
+
+    def _after_change(self, conv: Conversation, known: KnownMessage, record: str) -> None:
+        channel = self.config.channel(conv.channel_id)
+        if channel is not None and channel.mode == "record":
+            self._record(conv, known.author, datetime.now(timezone.utc), record)
+        if channel is not None and conv.thread_id in self._first_answer:
+            self._schedule_first_answer(conv, channel.initial_delay)
+        self.save(conv)
 
     def _new_conversation(self, thread_id: int, channel: ChannelConfig, guild_id: int) -> Conversation:
         backend = self.config.backends[self._next_backend % len(self.config.backends)].name
@@ -250,12 +341,11 @@ class Clangy:
             folder.mkdir(parents=True, exist_ok=True)
             await self.chat.download(attachment, folder / name)
             notes.append(f"attachments/{name} ({human_size(attachment.size)})")
-        return PendingMessage(author=msg.author, text=msg.text, created=msg.created, attachments=notes)
+        return PendingMessage(id=msg.id, author=msg.author, text=msg.text, created=msg.created, attachments=notes)
 
-    def _record(self, conv: Conversation, msg: IncomingMessage) -> None:
-        files = "".join(f"\n- attachment: {a.filename}" for a in msg.attachments)
-        entry = f"**{msg.author}** ({msg.created:%Y-%m-%d %H:%M} UTC): {msg.text}{files}"
-        self.store.append_record(conv.thread_id, msg.thread_name or str(conv.thread_id), conv.url, entry)
+    def _record(self, conv: Conversation, author: str, when: datetime, text: str, title: str = "") -> None:
+        entry = f"**{author}** ({when:%Y-%m-%d %H:%M} UTC): {text}"
+        self.store.append_record(conv.thread_id, title or str(conv.thread_id), conv.url, entry)
 
     # Runs
 
@@ -281,7 +371,7 @@ class Clangy:
 
     async def wait_idle(self) -> None:
         """Waits until no runs are in progress (for tests)."""
-        while running := [t for t in self._workers.values() if not t.done()]:
+        while running := [t for t in [*self._workers.values(), *self._first_answer.values()] if not t.done()]:
             await asyncio.gather(*running)
 
     async def _run(self, conv: Conversation) -> None:
@@ -296,7 +386,8 @@ class Clangy:
         shown = progress.render(self.config.max_retries)
         await self._show(conv, shown)
         updater = asyncio.create_task(self._update_progress(conv, progress, shown))
-        consumed = len(conv.pending)
+        consumed = {m.id for m in conv.pending}
+        self._in_run[conv.thread_id] = consumed
         delivered = list(conv.host_notes)
         self._snapshot_session(conv)
         files = self.files_dir(conv.thread_id)
@@ -330,6 +421,7 @@ class Clangy:
         timing["steps"] = progress.steps
         self._log_metrics(conv, result, stats, timing)
         del self._outboxes[conv.thread_id]
+        del self._in_run[conv.thread_id]
         await self._finish(conv, result, stats, consumed, delivered, outbox)
 
     async def _finish(
@@ -337,13 +429,13 @@ class Clangy:
         conv: Conversation,
         result: RunResult,
         stats: RunStats,
-        consumed: int,
+        consumed: set[int],
         delivered: list[str],
         outbox: Outbox,
     ) -> None:
         bot = self.chat.bot_name
         if result.answer is not None and not stats.backend_failed:
-            del conv.pending[:consumed]
+            conv.pending = [m for m in conv.pending if m.id not in consumed]
             conv.host_notes = [n for n in conv.host_notes if n not in delivered]
             conv.status = "idle"
             conv.retries = 0
@@ -406,11 +498,10 @@ class Clangy:
             if conv.game == game or result.timed_out or stats.backend_failed:
                 return result, stats
             game = conv.game
-            delivered.append(conv.host_notes[-1])
+            note = self._knowledge_note(game)  # type: ignore[arg-type]
+            delivered.append(note)
             # The text of the run that called set_game is never shown, so the model must answer again
-            prompt = (
-                f"{conv.host_notes[-1]} Now write your answer to the user's messages; don't refer to earlier drafts."
-            )
+            prompt = f"{note} Now write your answer to the user's messages; don't refer to earlier drafts."
         return result, stats
 
     def _prompt(self, conv: Conversation) -> str:

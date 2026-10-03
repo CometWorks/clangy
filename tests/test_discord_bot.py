@@ -37,3 +37,26 @@ def test_channel_message_from_self():
     msg = incoming(make_message(channel), bot)
     assert (msg.channel_id, msg.parent_id, msg.starts_thread) == (40, None, False)
     assert msg.from_self and not msg.mentions_bot
+
+
+async def test_edit_events_skip_own_and_unknown_messages():
+    from clangy.discord_bot import ClangyClient
+
+    client = MagicMock(spec=ClangyClient)
+    client.user = MagicMock(spec=discord.ClientUser, id=99)
+    client.core = MagicMock()
+    client.core.knows.side_effect = lambda message_id: message_id == 42
+    thread = MagicMock(spec=discord.Thread, id=42, parent_id=10)
+    thread.name = "Crash"
+
+    def payload(message_id: int, author_id: int, data_extra: dict) -> MagicMock:
+        event = MagicMock(spec=discord.RawMessageUpdateEvent, message_id=message_id)
+        event.data = {"author": {"id": str(author_id)}, **data_extra}
+        event.message = make_message(thread, author_id=author_id)
+        return event
+
+    for event in (payload(42, 99, {"content": "x"}), payload(7, 5, {"content": "x"}), payload(42, 5, {})):
+        await ClangyClient.on_raw_message_edit(client, event)
+    client.core.on_edit.assert_not_called()
+    await ClangyClient.on_raw_message_edit(client, payload(42, 5, {"content": "@Clangy help"}))
+    client.core.on_edit.assert_called_once()

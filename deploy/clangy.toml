@@ -34,11 +34,22 @@ compat = { thinkingFormat = "qwen-chat-template" }
 prompt_tps = 350.0
 gen_tps = 50.0
 
-# Add the test server's channels here, see docs/configuration.md
-# [[channels]]
-# id = 0
-# mode = "support"
-# initial_response = true
+# Chat channel: a mention starts a thread with Clangy
+[[channels]]
+id = 1556065388943511683
+mode = "mention"
+
+# Request forum: recorded, answers mentions in the threads, no first answer
+[[channels]]
+id = 1556065635589423164
+mode = "record"
+
+# Support forum: answers new threads once they have been quiet for 2 minutes
+[[channels]]
+id = 1556065514848002179
+mode = "support"
+initial_response = true
+initial_delay = 120.0
 
 [[knowledge.se1]]
 link = "knowledge/skills"

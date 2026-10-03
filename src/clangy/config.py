@@ -34,6 +34,8 @@ class ChannelConfig(BaseModel):
     id: int
     mode: ChannelMode
     initial_response: bool = False
+    initial_delay: float = 0.0
+    """Forums: the first answer to a new thread waits until nobody wrote in it for this long."""
     game: Game | None = None
     prompt: str = ""
 

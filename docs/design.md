@@ -33,7 +33,12 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 - A new forum post in a `support` or `record` channel starts a conversation. It gets an answer only if `initial_response` is on.
 - In a `mention` channel, a message mentioning Clangy starts a thread from that message. The thread is the conversation, and Clangy never writes in the channel itself.
 - Inside known conversations, every message is queued, and only mentions trigger a run.
+- With `initial_delay`, the first answer to a new forum thread waits until the thread has been quiet that long; every message, edit or deletion restarts the wait, and nothing is posted meanwhile. A mention cancels the wait and is answered right away. A wait cut short by a restart is dropped.
 - Threads Clangy doesn't know (started while it was down, or by v1) are ignored. Nothing is caught up after a restart.
+
+### Edits and deletions
+
+Clangy remembers the author, text and time of every message in its conversations (`known` in `state.json`). An edit or deletion of a message still waiting for the next run updates or removes it in the queue. For a message the model has already seen, or one the running answer is working from, the next run gets a `[host]` note: the new text, or the deleted text with an instruction to disregard it. A running answer is never interrupted. Edits don't trigger answers, even if they add a mention. Clangy ignores edits of its own messages and edits that only add link previews.
 - `record` channels also append every message to `store/records/<thread>.md`, without inference, so other conversations can find requests later.
 
 ## Sandbox
@@ -141,7 +146,7 @@ The host socket is bound through `/proc/self/fd/<dir fd>/host.sock` and pi conne
 
 `<data_dir>/conversations/<thread id>/`:
 
-- `state.json`: channel, backend, game, status, queued messages, progress message id, retry count. Host only.
+- `state.json`: channel, backend, game, status, queued messages, the conversation's known messages, progress message id, retry count. Host only.
 - `files/`: `received/` attachments, `sent/<run>/` files sent in answers, `outbox/` while a run is staging files. Host only.
 - `work/`: the sandbox's folder: the files the agent writes (`out/`), the `attachments`, `store`, `guide` and knowledge links, `.pi/` (session, system prompt, pi config) and `.clangy/host.sock` during a run.
 - `metrics.jsonl`: per-request token and timing stats.

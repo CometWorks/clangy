@@ -13,7 +13,8 @@ from clangy.proxy import short_path
 from clangy.runner import RunResult, RunSpec
 
 GUILD = 1
-SUPPORT, QUIET_FORUM, RECORD, MENTION, SE1_FORUM = 10, 20, 30, 40, 50
+SUPPORT, QUIET_FORUM, RECORD, MENTION, SE1_FORUM, SLOW_FORUM = 10, 20, 30, 40, 50, 60
+DELAY = 0.3
 
 Step = Callable[["FakeAgent", RunSpec], Awaitable[RunResult]]
 
@@ -89,6 +90,7 @@ def config(tmp_path, backend) -> Config:
             ChannelConfig(id=RECORD, mode="record"),
             ChannelConfig(id=MENTION, mode="mention"),
             ChannelConfig(id=SE1_FORUM, mode="support", initial_response=True, game="se1", prompt="Be extra nice."),
+            ChannelConfig(id=SLOW_FORUM, mode="support", initial_response=True, initial_delay=DELAY),
         ],
         progress_interval=0.01,
         health_interval=0.01,
@@ -509,4 +511,109 @@ async def test_state_survives_restart_without_catch_up(config, chat):
     await second.on_message(message(1019, "@Clangy hi", parent_id=QUIET_FORUM, mentions_bot=True))
     await second.wait_idle()
     assert "Hello" in agent.prompts[0]
+    await second.close()
+
+
+async def test_first_answer_waits_until_the_thread_is_quiet(bot, chat):
+    await bot.on_message(forum_post(SLOW_FORUM, 1030, "My game crashes"))
+    await asyncio.sleep(DELAY * 0.6)
+    await bot.on_message(message(1030, "Forgot: it's SE2", parent_id=SLOW_FORUM))
+    await asyncio.sleep(DELAY * 0.6)
+    assert bot.agent.specs == [], "a new message restarts the wait"
+    bot.on_edit(message(1030, "My game crashes on load", parent_id=SLOW_FORUM, id=1030))
+    await asyncio.sleep(DELAY * 0.6)
+    assert bot.agent.specs == [], "an edit restarts the wait too"
+    assert chat.messages == {}, "nothing is posted while waiting"
+    await bot.wait_idle()
+    [prompt] = bot.agent.prompts
+    assert "Alice: My game crashes on load" in prompt and "Forgot: it's SE2" in prompt
+
+
+async def test_mention_skips_the_first_answer_wait(bot, chat):
+    await bot.on_message(forum_post(SLOW_FORUM, 1031, "Question"))
+    await bot.on_message(message(1031, "@Clangy now please", parent_id=SLOW_FORUM, mentions_bot=True))
+    await bot.wait_idle()
+    await asyncio.sleep(DELAY * 1.5)
+    await bot.wait_idle()
+    assert len(bot.agent.specs) == 1, "the mention's answer replaces the delayed first answer"
+
+
+async def test_mentions_are_never_delayed(bot):
+    await bot.on_message(forum_post(SLOW_FORUM, 1032, "Question"))
+    await bot.wait_idle()
+    await bot.on_message(message(1032, "@Clangy more", parent_id=SLOW_FORUM, mentions_bot=True))
+    await asyncio.sleep(0.05)
+    assert len(bot.agent.specs) == 2
+
+
+async def test_edits_and_deletions_apply_to_the_next_run(bot, chat):
+    await bot.on_message(forum_post(QUIET_FORUM, 1033, "Original question", author="Alice"))
+    await bot.on_message(message(1033, "typo here", parent_id=QUIET_FORUM, id=7001, author="Bob"))
+    await bot.on_message(message(1033, "spam", parent_id=QUIET_FORUM, id=7002, author="Bob"))
+    # Still queued: edited and deleted in place
+    bot.on_edit(message(1033, "fixed text", parent_id=QUIET_FORUM, id=7001, author="Bob"))
+    bot.on_delete(7002)
+    await bot.on_message(message(1033, "@Clangy go", parent_id=QUIET_FORUM, mentions_bot=True))
+    await bot.wait_idle()
+    first = bot.agent.prompts[0]
+    assert (
+        "Bob: fixed text" in first and "typo here" not in first and "spam" not in first and "[host]" not in first[25:]
+    )
+
+    # Already seen by the model: the next run gets notes
+    bot.on_edit(message(1033, "Original question, now with details", parent_id=QUIET_FORUM, id=1033))
+    bot.on_delete(7001)
+    bot.on_edit(message(1033, "unchanged", parent_id=QUIET_FORUM, id=9999))
+    await bot.on_message(message(1033, "@Clangy again", parent_id=QUIET_FORUM, mentions_bot=True))
+    await bot.wait_idle()
+    second = bot.agent.prompts[1]
+    assert (
+        "Alice edited their message from 2026-10-03 12:00 UTC, it now reads: Original question, now with details"
+        in second
+    )
+    assert 'Bob deleted their message from 2026-10-03 12:00 UTC ("fixed text"). Disregard it.' in second
+    third_notes = bot.conversations[1033].host_notes
+    assert third_notes == [], "notes are delivered once"
+
+
+async def test_changes_during_a_run_dont_stop_it(bot, chat):
+    release = asyncio.Event()
+    bot.agent.script = [blocked(release, answer("One")), answer("Two")]
+    await bot.on_message(forum_post(SUPPORT, 1034, "Question v1"))
+    await asyncio.sleep(0.05)
+    bot.on_edit(message(1034, "Question v2", parent_id=SUPPORT, id=1034))
+    release.set()
+    await bot.wait_idle()
+    assert "Question v1" in bot.agent.prompts[0]
+    assert chat.in_channel(1034)[0].current.startswith("One")
+    await bot.on_message(message(1034, "@Clangy and?", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
+    assert "it now reads: Question v2" in bot.agent.prompts[1]
+
+
+async def test_own_and_unknown_edits_are_ignored(bot):
+    await bot.on_message(forum_post(QUIET_FORUM, 1035, "Question"))
+    bot.on_edit(message(1035, "changed", parent_id=QUIET_FORUM, id=1035, from_self=True))
+    bot.on_edit(message(1035, "changed", parent_id=QUIET_FORUM, id=4242))
+    bot.on_delete(4243)
+    conv = bot.conversations[1035]
+    assert conv.pending[0].text == "Question" and conv.host_notes == []
+
+
+async def test_record_mode_logs_edits_and_deletions(bot, config):
+    await bot.on_message(forum_post(RECORD, 1036, "Make a plugin"))
+    bot.on_edit(message(1036, "Make a plugin for X", parent_id=RECORD, id=1036))
+    bot.on_delete(1036)
+    record = (config.data_dir / "store" / "records" / "1036.md").read_text()
+    assert "edited a message, it now reads: Make a plugin for X" in record and "deleted their message" in record
+
+
+async def test_edits_still_work_after_restart(config, chat):
+    first = Clangy(config, chat, run_agent=FakeAgent())
+    await first.on_message(forum_post(QUIET_FORUM, 1037, "Question"))
+    await first.close()
+    second = Clangy(config, chat, run_agent=FakeAgent())
+    await second.load()
+    second.on_edit(message(1037, "Better question", parent_id=QUIET_FORUM, id=1037))
+    assert second.conversations[1037].pending[0].text == "Better question"
     await second.close()

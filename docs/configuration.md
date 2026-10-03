@@ -51,6 +51,7 @@ Clangy acts only in listed channels. The Discord permission overwrites must matc
 | `id` | required | Channel id. |
 | `mode` | required | `support` (forum), `record` (forum) or `mention` (text channel). |
 | `initial_response` | `false` | Forums: answer the post that starts a thread. |
+| `initial_delay` | `0` | Forums: the first answer waits until nobody wrote, edited or deleted anything in the new thread for this long, so people can add details and corrections. Mentions are never delayed and cancel the wait. |
 | `game` | none | `se1` or `se2` if the channel is about one game. |
 | `prompt` | `""` | Extra instructions appended to the system prompt for this channel. |
 
