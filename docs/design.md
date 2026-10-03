@@ -51,7 +51,9 @@ pi runs as `firejail ... -- env -i <vars> pi ...`:
 - No capabilities, no root, seccomp, private `/dev` and `/tmp`.
 - No per-sandbox memory limit: firejail's `--rlimit-as` breaks Node.js, whose WebAssembly reserves large address ranges. The systemd unit caps the whole service with `MemoryMax` and `TasksMax` instead.
 
-The allowlist the ticket mentions is just the pinned backend for now. The agent must not download anything, so nothing else is reachable. Add a CONNECT allowlist to `proxy.py` when a second host is needed.
+With `sandbox.proxy` set, commands in the sandbox can also reach an HTTP proxy with a domain allowlist (squid on the host). firejail can't filter by domain, so the sandbox keeps `--net=none`: the host relays a second unix socket in the work folder (`.clangy/proxy.sock`) to the proxy, the extension bridges a loopback port to it, and `HTTP_PROXY`, `HTTPS_PROXY` and their lowercase forms point at that port, with `NO_PROXY` for loopback. curl, wget, git, Python's urllib and requests, and uv honor these. Downloading files users link to stays forbidden by the prompt; the proxy is for looking things up, e.g. plugin sources on GitHub.
+
+`clangy check` and `clangy run` test the proxy from inside the sandbox: an unreachable proxy is only reported, a proxy that lets `example.com` through stops the start.
 
 `sandbox.firejail = false` runs pi without the sandbox. Use it only for development.
 

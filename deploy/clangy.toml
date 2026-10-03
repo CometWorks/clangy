@@ -20,6 +20,8 @@ read_only = [
 ]
 # The skills and their venvs are read-only: uv must use the venvs as they are, offline
 env = { UV_NO_SYNC = "1", UV_OFFLINE = "1", UV_PYTHON_DOWNLOADS = "never" }
+# squid on the host with a domain allowlist; commands in the sandbox get HTTP(S)_PROXY pointing to it
+proxy = "127.0.0.1:3128"
 
 [[backends]]
 name = "polaris"

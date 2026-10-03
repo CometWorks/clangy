@@ -2,7 +2,7 @@ import socket
 
 import pytest
 
-from tests.fakes import FakeBackend, FakeChat
+from tests.fakes import FakeBackend, FakeChat, FakeSquid
 
 _connect = socket.socket.connect
 
@@ -20,6 +20,14 @@ socket.socket.connect = _offline_connect  # type: ignore[method-assign]
 @pytest.fixture
 async def backend():
     fake = FakeBackend()
+    await fake.start()
+    yield fake
+    await fake.stop()
+
+
+@pytest.fixture
+async def squid():
+    fake = FakeSquid({"pypi.org"})
     await fake.start()
     yield fake
     await fake.stop()

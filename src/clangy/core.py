@@ -1,6 +1,7 @@
 """Discord independent core: conversations, triggers, runs, progress and retries."""
 
 import asyncio
+import contextlib
 import json
 import logging
 import shutil
@@ -16,9 +17,9 @@ from pydantic import BaseModel, Field
 
 from clangy import text
 from clangy.backend import Backend
-from clangy.config import ChannelConfig, Config, Game
+from clangy.config import ChannelConfig, Config, Game, SandboxConfig
 from clangy.files import FileError, Outbox, safe_filename
-from clangy.proxy import HostServer, ProxyRun, RunStats, ToolError
+from clangy.proxy import HostServer, ProxyRun, RunStats, TcpRelay, ToolError
 from clangy.runner import PACKAGE_DIR, RunPaths, RunResult, RunSpec, free_port, run_pi, write_pi_config
 from clangy.store import Store, StoreError
 
@@ -135,6 +136,11 @@ class Progress:
         now = time.time()
         message = text.progress(self.state, self.steps, now - self.started, self.eta, self.deadline, now)
         return f"{message} (retry {self.retry}/{max_retries})" if self.retry else message
+
+
+def proxy_relay(sandbox: SandboxConfig, paths: RunPaths) -> TcpRelay | contextlib.nullcontext:
+    """Relays the run's proxy socket to the configured proxy, if any."""
+    return TcpRelay(paths.proxy_socket, sandbox.proxy) if sandbox.proxy else contextlib.nullcontext()
 
 
 def human_size(size: int) -> str:
@@ -483,6 +489,7 @@ class Clangy:
                 sandbox=self.config.sandbox,
                 prompt=prompt,
                 read_only=read_only,
+                proxy_port=free_port() if self.config.sandbox.proxy else None,
             )
             remaining = max(1.0, (progress.deadline or 0) - time.time())
 
@@ -492,7 +499,8 @@ class Clangy:
                 progress.state = state
 
             async with HostServer(run, paths.socket):
-                result = await self.run_agent(spec, port, remaining, on_state)
+                async with proxy_relay(self.config.sandbox, paths):
+                    result = await self.run_agent(spec, port, remaining, on_state)
             tools += result.tools
             result.tools = tools
             if conv.game == game or result.timed_out or stats.backend_failed:

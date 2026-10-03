@@ -49,6 +49,8 @@ class SandboxConfig(BaseModel):
     """Extra host paths the sandbox may read, e.g. the node installation."""
     env: dict[str, str] = Field(default_factory=dict)
     """Extra environment variables inside the sandbox, e.g. to keep uv offline."""
+    proxy: str | None = None
+    """host:port of an HTTP proxy the sandbox may use, e.g. a local squid with a domain allowlist."""
 
 
 class KnowledgeSource(BaseModel):

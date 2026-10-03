@@ -3,7 +3,8 @@
  *
  * - Replaces pi's assembled system prompt with Clangy's fixed one. pi appends the current date and
  *   any AGENTS.md it finds, which would break prompt caching between runs.
- * - Bridges 127.0.0.1:CLANGY_PORT to the host's unix socket, the sandbox's only way out.
+ * - Bridges 127.0.0.1:CLANGY_PORT to the host's unix socket, the sandbox's only way out, and
+ *   127.0.0.1:CLANGY_PROXY_PORT to the host's relay to the filtering proxy when one is configured.
  * - Registers the host-side tools. The host assigns numbers and validates the format.
  */
 
@@ -76,15 +77,21 @@ const tools = [
 	},
 ];
 
-export default function (pi: ExtensionAPI) {
-	const bridge = net.createServer((client) => {
-		const upstream = net.connect(socketPath);
+function bridge(port: number, path: string) {
+	const server = net.createServer((client) => {
+		const upstream = net.connect(path);
 		client.pipe(upstream).pipe(client);
 		client.on("error", () => upstream.destroy());
 		upstream.on("error", () => client.destroy());
 	});
-	bridge.listen(Number(process.env.CLANGY_PORT), "127.0.0.1");
-	bridge.unref();
+	server.listen(port, "127.0.0.1");
+	server.unref();
+}
+
+export default function (pi: ExtensionAPI) {
+	bridge(Number(process.env.CLANGY_PORT), socketPath);
+	// The filtering proxy, for downloads by commands the agent runs; the env has HTTP(S)_PROXY pointing here
+	if (process.env.CLANGY_PROXY_PORT) bridge(Number(process.env.CLANGY_PROXY_PORT), process.env.CLANGY_PROXY_SOCKET!);
 
 	pi.on("before_agent_start", () => ({ systemPrompt }));
 

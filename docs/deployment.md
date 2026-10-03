@@ -19,6 +19,15 @@ The sandbox may read pi's `bin` and `install` folders and its Node.js, but not t
 
 - firejail (`sudo apt install firejail`). Without a working sandbox `clangy run` refuses to start, with exit status 78, which the unit doesn't restart on.
 - The backends reachable from the host (`polaris:8080`).
+- Optionally squid, see Proxy.
+
+## Proxy
+
+The sandbox has no network, except an optional squid on the host (`proxy = "127.0.0.1:3128"`) whose domain allowlist decides what commands in the sandbox can reach. Let squid listen on loopback only, since only Clangy uses it and the allowlist has no source restriction:
+
+```
+http_port 127.0.0.1:3128
+```
 
 ## Deploy
 

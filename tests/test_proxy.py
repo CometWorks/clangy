@@ -1,10 +1,11 @@
+import asyncio
 import json
 
 import aiohttp
 
 from clangy.backend import Backend
 from clangy.config import BackendConfig
-from clangy.proxy import HostServer, ProxyRun, ToolError, short_path
+from clangy.proxy import HostServer, ProxyRun, TcpRelay, ToolError, short_path
 
 
 async def tools(name: str, params: dict) -> str:
@@ -93,3 +94,28 @@ async def test_tools(tmp_path):
             status, body = await post(tmp_path / "host.sock", "/tools/fail", {})
     assert status == 400 and json.loads(body) == {"error": "nope"}
     assert not (tmp_path / "host.sock").exists()
+
+
+async def connect_via(socket_path, host: str) -> bytes:
+    with short_path(socket_path) as short:
+        reader, writer = await asyncio.open_unix_connection(short)
+    writer.write(f"CONNECT {host}:443 HTTP/1.1\r\n\r\n".encode())
+    await writer.drain()
+    answer = await reader.read(100)
+    writer.close()
+    return answer
+
+
+async def test_relay_reaches_the_proxy(tmp_path, squid):
+    deep = tmp_path.joinpath(*["r" * 50] * 4) / "proxy.sock"
+    async with TcpRelay(deep, f"127.0.0.1:{squid.port}"):
+        assert (await connect_via(deep, "pypi.org")).startswith(b"HTTP/1.1 200")
+        assert (await connect_via(deep, "example.com")).startswith(b"HTTP/1.1 403")
+    assert squid.requests == ["pypi.org:443", "example.com:443"]
+    assert not deep.exists()
+
+
+async def test_relay_closes_when_the_proxy_is_down(tmp_path, squid):
+    await squid.stop()
+    async with TcpRelay(tmp_path / "proxy.sock", f"127.0.0.1:{squid.port}"):
+        assert await connect_via(tmp_path / "proxy.sock", "pypi.org") == b""

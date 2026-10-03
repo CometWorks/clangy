@@ -106,3 +106,14 @@ def test_host_tools_match_the_extension():
     from clangy.runner import EXTENSION, HOST_TOOLS
 
     assert re.findall(r'name: "(\w+)"', EXTENSION.read_text()) == HOST_TOOLS
+
+
+def test_proxy_environment(tmp_path):
+    plain = build_command(spec(tmp_path, SandboxConfig(firejail=False)), 1)
+    assert not any(arg.startswith(("HTTP_PROXY", "https_proxy")) for arg in plain)
+    run = spec(tmp_path, SandboxConfig(firejail=False))
+    run.proxy_port = 5555
+    command = build_command(run, 1)
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        assert f"{name}=http://127.0.0.1:5555" in command
+    assert "NO_PROXY=127.0.0.1,localhost" in command and "CLANGY_PROXY_SOCKET=.clangy/proxy.sock" in command

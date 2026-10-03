@@ -4,6 +4,7 @@ It forwards chat completions to the conversation's pinned backend, holding the A
 and serves the host-side tools (tickets, notes, plans, game version).
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -80,6 +81,50 @@ def short_path(path: Path) -> Iterator[str]:
         yield f"/proc/self/fd/{fd}/{path.name}"
     finally:
         os.close(fd)
+
+
+async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    try:
+        while data := await reader.read(65536):
+            writer.write(data)
+            await writer.drain()
+    except ConnectionError:
+        pass
+    finally:
+        writer.close()
+
+
+class TcpRelay:
+    """Relays connections from a unix socket to a TCP address: the sandbox's way to the filtering proxy."""
+
+    def __init__(self, socket_path: Path, address: str):
+        self.socket_path = socket_path
+        host, _, port = address.rpartition(":")
+        self.host, self.port = host, int(port)
+        self._server: asyncio.Server | None = None
+
+    async def __aenter__(self) -> "TcpRelay":
+        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+        self.socket_path.unlink(missing_ok=True)
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        with short_path(self.socket_path) as path:
+            sock.bind(path)
+        self._server = await asyncio.start_unix_server(self._handle, sock=sock)
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        assert self._server is not None
+        self._server.close()
+        self.socket_path.unlink(missing_ok=True)
+
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            upstream_reader, upstream_writer = await asyncio.open_connection(self.host, self.port)
+        except OSError as e:
+            log.warning("Proxy %s:%d unreachable: %r", self.host, self.port, e)
+            writer.close()
+            return
+        await asyncio.gather(_pipe(reader, upstream_writer), _pipe(upstream_reader, writer))
 
 
 class HostServer:

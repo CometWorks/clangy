@@ -55,6 +55,10 @@ class RunPaths:
     def socket(self) -> Path:
         return self.work / ".clangy" / "host.sock"
 
+    @property
+    def proxy_socket(self) -> Path:
+        return self.work / ".clangy" / "proxy.sock"
+
 
 @dataclass
 class RunSpec:
@@ -64,6 +68,8 @@ class RunSpec:
     prompt: str
     read_only: list[Path] = field(default_factory=list)
     """Host paths the sandbox may read: knowledge, store, guide."""
+    proxy_port: int | None = None
+    """Sandbox port bridged to the filtering proxy, if one is configured."""
 
 
 @dataclass
@@ -127,6 +133,14 @@ def build_command(spec: RunSpec, port: int) -> list[str]:
         "CLANGY_SYSTEM_PROMPT": str(spec.paths.system_prompt),
         **spec.sandbox.env,
     }
+    if spec.proxy_port is not None:
+        proxy = f"http://127.0.0.1:{spec.proxy_port}"
+        env["CLANGY_PROXY_PORT"] = str(spec.proxy_port)
+        env["CLANGY_PROXY_SOCKET"] = str(spec.paths.proxy_socket.relative_to(spec.paths.work))
+        # Both spellings: curl only reads the lowercase http_proxy, other tools the uppercase ones
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            env[name] = proxy
+        env["NO_PROXY"] = env["no_proxy"] = "127.0.0.1,localhost"
     command = ["env", "-i", *(f"{k}={v}" for k, v in env.items()), *pi_arguments(spec)]
     if not spec.sandbox.firejail:
         return command

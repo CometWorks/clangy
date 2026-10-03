@@ -1,5 +1,6 @@
 """Offline stand-ins for Discord and the inference backend."""
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -145,3 +146,31 @@ class FakeChat:
 
     async def download(self, attachment: Attachment, path: Path) -> None:
         path.write_bytes(self.files[attachment.url])
+
+
+class FakeSquid:
+    """Answers CONNECT requests like a squid with a domain allowlist."""
+
+    def __init__(self, allowed: set[str]) -> None:
+        self.allowed = allowed
+        self.requests: list[str] = []
+        self._server: asyncio.Server | None = None
+        self.port = 0
+
+    async def start(self) -> None:
+        self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
+        self.port = self._server.sockets[0].getsockname()[1]
+
+    async def stop(self) -> None:
+        assert self._server is not None
+        self._server.close()
+
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        line = (await reader.readline()).decode()
+        target = line.split()[1] if len(line.split()) > 1 else ""
+        self.requests.append(target)
+        host = target.rsplit(":", 1)[0]
+        status = "200 Connection established" if host in self.allowed else "403 Forbidden"
+        writer.write(f"HTTP/1.1 {status}\r\n\r\n".encode())
+        await writer.drain()
+        writer.close()

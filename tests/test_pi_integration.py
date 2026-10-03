@@ -61,3 +61,27 @@ async def test_pi_run_with_host_tool_and_stable_prefix(tmp_path, backend, chat):
         prefix = earlier["messages"]
         assert json.dumps(later["messages"][: len(prefix)]) == json.dumps(prefix)
         assert json.dumps(later["tools"]) == json.dumps(earlier["tools"])
+
+
+async def test_pi_commands_reach_the_proxy(tmp_path, backend, chat, squid):
+    assert PI is not None
+    config = Config(
+        data_dir=tmp_path,
+        backends=[BackendConfig(name="local", url=backend.url, model="m")],
+        channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True)],
+        sandbox=SandboxConfig(firejail=False, path=os.environ["PATH"], proxy=f"127.0.0.1:{squid.port}"),
+        run_deadline=60,
+    )
+    probe = (
+        "python3 -c \"import os, socket; port = int(os.environ['https_proxy'].rsplit(':', 1)[1]); "
+        "s = socket.create_connection(('127.0.0.1', port)); s.sendall(b'CONNECT pypi.org:443 HTTP/1.1\\r\\n\\r\\n'); "
+        'print(s.recv(64).decode())"'
+    )
+    backend.replies = [Reply(tool="bash", arguments={"command": probe}), Reply("Done.")]
+    bot = Clangy(config, chat)
+    await bot.on_message(forum_post(SUPPORT, 2001, "Check the proxy"))
+    await bot.wait_idle()
+    await bot.close()
+    assert squid.requests == ["pypi.org:443"]
+    tool_result = json.dumps(backend.requests[-1]["messages"][-1])
+    assert "200 Connection established" in tool_result

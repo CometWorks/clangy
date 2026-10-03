@@ -8,17 +8,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from clangy.config import ChannelConfig, Config
-from clangy.core import Clangy, IncomingMessage
+from clangy.core import Clangy, IncomingMessage, proxy_relay
 from clangy.runner import RunPaths, RunSpec, build_command
 
 PROBE = """
 import json, os, shutil, socket
 result = {}
-try:
-    socket.create_connection(("1.1.1.1", 53), timeout=3).close()
-    result["network blocked"] = False
-except OSError:
-    result["network blocked"] = True
+if check_network:
+    try:
+        socket.create_connection(("1.1.1.1", 53), timeout=3).close()
+        result["network blocked"] = False
+    except OSError:
+        result["network blocked"] = True
 result["config, keys and other data hidden"] = not any(os.path.exists(p) for p in hidden)
 result["knowledge readable"] = all(os.access(p, os.R_OK) and os.listdir(p) for p in readable)
 try:
@@ -28,6 +29,17 @@ except OSError:
     result["work folder writable"] = False
 for tool in ("pi", "node", "python3"):
     result[f"{tool} available"] = shutil.which(tool) is not None
+
+def status(host):
+    with socket.socket(socket.AF_UNIX) as s:
+        s.settimeout(30)
+        s.connect(proxy_socket)
+        s.sendall(f"CONNECT {host}:443 HTTP/1.1\\r\\nHost: {host}:443\\r\\n\\r\\n".encode())
+        return s.recv(200).split(b"\\r\\n")[0].split()[1:2]
+
+if proxy_socket:
+    result["proxy reachable"] = status("pypi.org") != []
+    result["proxy blocks other sites"] = status("example.com") != [b"200"]
 print(json.dumps(result))
 """
 
@@ -53,7 +65,7 @@ class ConsoleChat:
         raise NotImplementedError
 
 
-async def probe_sandbox(config: Config, config_path: Path, base: Path) -> dict[str, bool]:
+async def probe_sandbox(config: Config, config_path: Path, base: Path, network: bool = True) -> dict[str, bool]:
     """Runs a probe script instead of pi through the same sandbox command line."""
     work = base / "probe" / "work"
     work.mkdir(parents=True)
@@ -63,15 +75,20 @@ async def probe_sandbox(config: Config, config_path: Path, base: Path) -> dict[s
     hidden = [str(p) for p in secrets if p.exists()]
     sources = [s.path for sources in config.knowledge.values() for s in sources if s.path and s.path.exists()]
     readable = [p.resolve() for p in sources]
-    code = f"work, hidden, readable = {str(work)!r}, {hidden!r}, {[str(p) for p in readable]!r}\n{PROBE}"
+    proxy_socket = str(RunPaths(work).proxy_socket.relative_to(work)) if config.sandbox.proxy else None
+    code = (
+        f"work, hidden, readable, proxy_socket, check_network = {str(work)!r}, {hidden!r}, "
+        f"{[str(p) for p in readable]!r}, {proxy_socket!r}, {network!r}\n{PROBE}"
+    )
     sandbox = config.sandbox.model_copy(update={"pi_command": ["python3", "-c", code]})
     spec = RunSpec(paths=RunPaths(work), backend=config.backends[0], sandbox=sandbox, prompt="", read_only=readable)
     command = build_command(spec, 0)
-    try:
-        process = await asyncio.create_subprocess_exec(*command, cwd=work, stdout=asyncio.subprocess.PIPE)
-    except FileNotFoundError:
-        return {f"{command[0]} installed": False}
-    stdout, _ = await process.communicate()
+    async with proxy_relay(config.sandbox, RunPaths(work)):
+        try:
+            process = await asyncio.create_subprocess_exec(*command, cwd=work, stdout=asyncio.subprocess.PIPE)
+        except FileNotFoundError:
+            return {f"{command[0]} installed": False}
+        stdout, _ = await process.communicate()
     lines = stdout.decode().strip().splitlines()
     return json.loads(lines[-1]) if lines else {"probe ran": False}
 
@@ -129,7 +146,8 @@ async def sandbox_problems(config: Config, config_path: Path) -> list[str]:
     shutil.rmtree(base, ignore_errors=True)
     results = await probe_sandbox(config, config_path, base)
     shutil.rmtree(base, ignore_errors=True)
-    return [name for name, passed in results.items() if not passed]
+    # An unreachable proxy only breaks downloads; a proxy that lets anything through is a leak
+    return [name for name, passed in results.items() if not passed and name != "proxy reachable"]
 
 
 def main(config: Config, config_path: Path) -> None:
