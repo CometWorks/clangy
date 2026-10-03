@@ -1,0 +1,28 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      # The tests run in a network namespace with only loopback, so anything reaching
+      # for Discord, an LLM or the Internet fails instead of passing by accident.
+      - name: Run tests offline
+        run: |
+          sudo unshare --net -- sh -c "ip link set lo up && exec sudo -u $(id -un) -- .venv/bin/python -m pytest -q -p no:cacheprovider"

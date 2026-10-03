@@ -1,0 +1,63 @@
+# Copy to config.toml and adjust. See docs/configuration.md.
+
+data_dir = "/srv/clangy"
+token_env = "DISCORD_TOKEN"
+run_deadline = 600.0
+attachment_max_bytes = 26214400
+progress_interval = 10.0
+health_interval = 30.0
+max_retries = 3
+
+[sandbox]
+firejail = true
+pi_command = ["pi"]
+path = "/opt/node/bin:/usr/bin:/bin"
+read_only = ["/opt/node"]
+
+[[backends]]
+name = "r9700"
+url = "http://192.168.1.20:8080/v1"
+model = "qwen3.8-27b-q5"
+kind = "llamacpp"
+parallel = 2
+slot_save = true
+context_window = 131072
+max_tokens = 4096
+thinking = "low"
+compat = { thinkingFormat = "qwen-chat-template" }
+prompt_tps = 300.0
+gen_tps = 40.0
+
+# Support forum: answers new posts, then only when mentioned
+[[channels]]
+id = 100000000000000001
+mode = "support"
+initial_response = true
+
+# Request forum: records the threads, answers only when mentioned
+[[channels]]
+id = 100000000000000002
+mode = "record"
+
+# Chat channel: a mention starts a thread with Clangy
+[[channels]]
+id = 100000000000000003
+mode = "mention"
+game = "se1"
+prompt = "This is the SE1 plugin developer channel. Most questions are about plugin development."
+
+[[knowledge.se1]]
+url = "https://github.com/CometWorks/skills.git"
+mount = "skills"
+
+[[knowledge.se1]]
+url = "https://git.cometworks.se/CometWorks/se-dev-books.git"
+mount = "books"
+
+[[knowledge.se2]]
+url = "https://github.com/CometWorks/skills2.git"
+mount = "skills"
+
+[[knowledge.se2]]
+url = "https://git.cometworks.se/CometWorks/se2-dev-books.git"
+mount = "books"

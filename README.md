@@ -1,3 +1,21 @@
 # Clangy
 
-Clangy v2: Discord support bot.
+Clangy v2, the support bot of the [Pulsar](https://github.com/SpaceGT/Pulsar) Discord server. It collects what developers need from bug reports, files tickets, and points plugin, mod and script developers to the right resources, for both Space Engineers 1 and 2.
+
+Each Discord thread runs a [pi](https://pi.dev) agent in its own firejail sandbox against our own OpenAI compatible backends.
+
+## Quick start
+
+```bash
+uv sync
+uv run pytest
+cp config.example.toml config.toml   # then edit
+DISCORD_TOKEN=... uv run clangy run
+```
+
+## Docs
+
+- [Design](docs/design.md): how a run works, sandbox, prompt caching, retries, knowledge
+- [Configuration](docs/configuration.md)
+- [Deployment](docs/deployment.md)
+- [Testing](docs/testing.md)
