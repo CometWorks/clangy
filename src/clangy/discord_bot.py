@@ -56,7 +56,12 @@ class DiscordChat:
         channel = await self._channel(channel_id)
         assert self.client.user is not None
         newest_first = channel.history(limit=limit, before=discord.Object(before_id), after=after, oldest_first=False)
-        return [incoming(m, self.client.user) async for m in newest_first][::-1]
+        try:
+            return [incoming(m, self.client.user) async for m in newest_first][::-1]
+        except discord.HTTPException as e:
+            # Missing Read Message History must not cost the answer, only its context
+            log.warning("Can't read the history of channel %s: %s", channel_id, e)
+            return []
 
     async def download(self, attachment: Attachment, path: Path) -> None:
         size = 0
