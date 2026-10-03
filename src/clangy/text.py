@@ -80,21 +80,15 @@ def timestamp(unix: float) -> str:
     return f"<t:{int(unix)}:R>"
 
 
-def progress(state: str, steps: int, elapsed: float, eta: float | None, deadline: float | None, now: float) -> str:
-    """Progress message; the minute counter changes on every per-minute edit, so users see it's alive."""
-    minutes = int(elapsed // 60)
-    details = [f"step {steps}"] if steps > 1 else []
-    details.append(f"{minutes} min so far" if minutes else "just started")
-    timing = []
-    if eta is not None:
-        timing.append(f"answer expected {timestamp(eta)}" if eta > now else "taking longer than expected")
-    if deadline is not None:
-        timing.append(f"deadline {timestamp(deadline)}")
-    text = f"⏳ Working on it: {state} ({', '.join(details)})."
-    if timing:
-        sentence = ", ".join(timing)
-        text += f" {sentence[0].upper()}{sentence[1:]}."
-    return text
+def progress(eta: float, deadline: float | None, ahead: int, now: float) -> str:
+    """Progress message: just the expected time, with details only when something is off."""
+    if eta <= now:
+        late = f"⏳ Taking longer than expected"
+        return f"{late}, deadline {timestamp(deadline)}." if deadline is not None else f"{late}."
+    if ahead:
+        others = "answer" if ahead == 1 else "answers"
+        return f"⏳ Waiting for {ahead} other {others} first. Answer expected {timestamp(eta)}."
+    return f"⏳ Answer expected {timestamp(eta)}."
 
 
 def timed_out(bot_name: str) -> str:

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Knowledge is linked into the work folder; pi's grep (rg) and find (fd) must search through the links.
+here=$(dirname "$(readlink -f "$0")")
+PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$here" | paste -sd: -)
+tool=$(basename "$0")
+exec "$(command -v "$tool")" --follow "$@"

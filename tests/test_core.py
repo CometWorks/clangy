@@ -185,44 +185,44 @@ async def test_messages_during_a_run_go_into_the_next_run(bot, chat):
     assert [m.current.split("\n")[0] for m in chat.in_channel(1004)] == ["One", "Two"]
 
 
-async def test_progress_shows_queue_position(bot, chat, config):
+async def test_progress_shows_the_queue_only_when_waiting(bot, chat, config):
     release = asyncio.Event()
     bot.agent.script = [blocked(release, answer("A")), answer("B")]
     await bot.on_message(forum_post(SUPPORT, 1005, "First"))
     await bot.on_message(forum_post(SUPPORT, 1006, "Second"))
     await asyncio.sleep(0.1)
-    [waiting] = chat.in_channel(1006)
-    assert waiting.current.startswith("⏳") and "waiting in queue" in waiting.current and "<t:" in waiting.current
     [running] = chat.in_channel(1005)
-    assert "reading" in running.current and "deadline <t:" in running.current
+    assert running.current.startswith("⏳ Answer expected <t:") and running.current.endswith(":R>.")
+    [waiting] = chat.in_channel(1006)
+    assert waiting.content.startswith("⏳ Waiting for 1 other answer first. Answer expected <t:")
     release.set()
     await bot.wait_idle()
 
 
-async def test_progress_is_edited_every_minute(bot, chat, monkeypatch):
+async def test_progress_says_when_it_takes_longer(bot, chat, monkeypatch):
     clock = [1_000_000.0]
     monkeypatch.setattr("clangy.core.time.time", lambda: clock[0])
     release = asyncio.Event()
 
-    async def two_turns(agent: FakeAgent, spec: RunSpec) -> RunResult:
+    async def slow(agent: FakeAgent, spec: RunSpec) -> RunResult:
         agent.on_state("looking things up")
         agent.on_state("reading")
         await release.wait()
         return await answer("Done.")(agent, spec)
 
-    bot.agent.script = [two_turns]
+    bot.agent.script = [slow]
     await bot.on_message(forum_post(SUPPORT, 1023, "Slow one"))
     await asyncio.sleep(0.05)
     [progress] = chat.in_channel(1023)
-    for minute in (1, 2):
-        clock[0] += 60
-        await asyncio.sleep(0.05)
-        assert f"(step 2, {minute} min so far)" in progress.current
+    assert progress.edits == [], "nothing to report while on time"
+    clock[0] += 300
+    await asyncio.sleep(0.05)
+    assert progress.current.startswith("⏳ Taking longer than expected, deadline <t:")
     release.set()
     await bot.wait_idle()
     assert progress.current.startswith("Done.")
     record = json.loads((bot.conversation_dir(1023) / "metrics.jsonl").read_text())
-    assert record["total_seconds"] == 120.0 and record["steps"] == 2
+    assert record["total_seconds"] == 300.0 and record["steps"] == 2
     assert (record["thread_id"], record["channel_id"], record["model"]) == (1023, SUPPORT, "m")
     assert record["answer_chars"] == len("Done.") and record["error"] is None
     assert record["requests"][0]["status"] == 200
@@ -725,3 +725,29 @@ async def test_mounts_are_in_every_conversation(bot, config, tmp_path):
     await bot.on_message(message(1070, "@Clangy it's SE1", parent_id=QUIET_FORUM, mentions_bot=True))
     await bot.wait_idle()
     assert repos in bot.agent.specs[-1].read_only, "mounts stay when the game is set"
+
+
+async def test_knowledge_note_lists_the_skills(bot, config, tmp_path):
+    skills = tmp_path / "srv" / "skills"
+    for name, description in (("se-dev", "Overview"), ("se-dev-game-code", "Decompiled game code")):
+        (skills / name).mkdir(parents=True)
+        (skills / name / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: {description}\nlicense: MIT\n---\n# Body\n"
+        )
+    books = tmp_path / "srv" / "books"
+    (books / "se-dev-game-book").mkdir(parents=True)
+    (books / "se-dev-game-book" / "SKILL.md").write_text('---\nname: se-dev-game-book\ndescription: "Handbook"\n---\n')
+    config.knowledge["se1"] = [
+        KnowledgeSource(path=skills, link="knowledge/skills"),
+        KnowledgeSource(path=books, link="knowledge/books"),
+    ]
+    bot.agent.script = [tool("set_game", {"game": "se1"}, answer("")), answer("SE1 answer.")]
+    await bot.on_message(forum_post(SUPPORT, 1080, "Do we have foxes in SE1?"))
+    await bot.wait_idle()
+    second = bot.agent.prompts[1]
+    assert second.startswith("[host] This conversation is about SE1. Its knowledge is under knowledge/.")
+    assert "- se-dev: Overview (knowledge/skills/se-dev/SKILL.md)" in second
+    assert "- se-dev-game-code: Decompiled game code (knowledge/skills/se-dev-game-code/SKILL.md)" in second
+    assert "- se-dev-game-book: Handbook (knowledge/books/se-dev-game-book/SKILL.md)" in second
+    assert second.endswith("Now write your answer to the user's messages; don't refer to earlier drafts.")
+    assert bot.conversations[1080].host_notes == []

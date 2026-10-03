@@ -117,3 +117,20 @@ def test_proxy_environment(tmp_path):
     for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
         assert f"{name}=http://127.0.0.1:5555" in command
     assert "NO_PROXY=127.0.0.1,localhost" in command and "CLANGY_PROXY_SOCKET=.clangy/proxy.sock" in command
+
+
+def test_search_wrappers_follow_links(tmp_path):
+    import subprocess
+
+    from clangy.runner import SANDBOX_BIN
+
+    tools = tmp_path / "bin"
+    tools.mkdir()
+    for name in ("rg", "fd"):
+        fake = tools / name
+        fake.write_text(f'#!/bin/sh\necho {name} "$@"\n')
+        fake.chmod(0o755)
+    env = {"PATH": f"{SANDBOX_BIN}:{tools}:/usr/bin:/bin"}
+    for name in ("rg", "fd"):
+        out = subprocess.run([name, "needle", "knowledge"], env=env, capture_output=True, text=True, check=True)
+        assert out.stdout.strip() == f"{name} --follow needle knowledge"

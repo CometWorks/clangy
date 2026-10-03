@@ -36,6 +36,13 @@ class Backend:
     def api_key(self) -> str | None:
         return os.environ.get(self.config.api_key_env) if self.config.api_key_env else None
 
+    def ahead_of(self, conversation: str) -> int:
+        """Runs that go before this conversation's: the running ones and those queued earlier."""
+        if conversation in self._running:
+            return 0
+        queued = self._waiting.index(conversation) if conversation in self._waiting else len(self._waiting)
+        return len(self._running) + queued if len(self._running) + queued >= self.config.parallel else 0
+
     def queue_position(self, conversation: str) -> int:
         """Number of runs ahead of this conversation in the queue, 0 once it is running."""
         if conversation in self._running or conversation not in self._waiting:
@@ -79,7 +86,7 @@ class Backend:
 
         Runs with tool calls take several model turns, so the typical run time is the floor.
         """
-        queued = self.queue_position(conversation) * self.run_seconds / self.config.parallel
+        queued = self.ahead_of(conversation) * self.run_seconds / self.config.parallel
         tokens = prompt_tokens / self.prompt_tps + answer_tokens / self.gen_tps
         return queued + max(tokens, self.run_seconds)
 

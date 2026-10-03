@@ -103,23 +103,39 @@ class Conversation(BaseModel):
 RunAgent = Callable[[RunSpec, int, float, Callable[[str], None]], Awaitable[RunResult]]
 
 
-QUEUED = "waiting in queue"
-
-
 @dataclass
 class Progress:
-    state: str = QUEUED
-    eta: float | None = None
+    eta: float = 0.0
     deadline: float | None = None
+    ahead: int = 0
+    """Runs before this one in the backend's queue."""
     retry: int = 0
     steps: int = 0
     """Model turns so far."""
     started: float = field(default_factory=lambda: time.time())
 
     def render(self, max_retries: int) -> str:
-        now = time.time()
-        message = text.progress(self.state, self.steps, now - self.started, self.eta, self.deadline, now)
+        message = text.progress(self.eta, self.deadline, self.ahead, time.time())
         return f"{message} (retry {self.retry}/{max_retries})" if self.retry else message
+
+
+def knowledge_note_start(game: Game) -> str:
+    return f"[host] This conversation is about {game.upper()}."
+
+
+def skill_frontmatter(path: Path) -> tuple[str, str]:
+    """name and description from a SKILL.md's frontmatter."""
+    lines = path.read_text(errors="replace").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return "", ""
+    fields: dict[str, str] = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        key, _, value = line.partition(":")
+        if key in ("name", "description"):
+            fields[key] = value.strip().strip("\"'")
+    return fields.get("name", ""), fields.get("description", "")
 
 
 def proxy_relay(sandbox: SandboxConfig, paths: RunPaths) -> TcpRelay | contextlib.nullcontext:
@@ -446,6 +462,7 @@ class Clangy:
         first_run = not RunPaths(self._work_dir(conv)).session.exists()
         prompt_tokens = len(prompt) // 4 + (FIRST_RUN_TOKENS if first_run else 0)
         progress.eta = time.time() + backend.estimate(conv.key, prompt_tokens, ANSWER_TOKENS)
+        progress.ahead = backend.ahead_of(conv.key)
         timing = {"predicted_seconds": round(progress.eta - progress.started, 1), "prompt_estimate": prompt_tokens}
         shown = progress.render(self.config.max_retries)
         await self._show(conv, shown)
@@ -470,7 +487,6 @@ class Clangy:
             try:
                 conv.status = "running"
                 self.save(conv)
-                progress.state = "reading"
                 progress.eta = time.time() + backend.estimate(conv.key, prompt_tokens, ANSWER_TOKENS)
                 progress.deadline = time.time() + self.config.run_deadline
                 result, stats = await self._execute(conv, backend, prompt, progress, delivered)
@@ -554,7 +570,6 @@ class Clangy:
             def on_state(state: str) -> None:
                 if state == "reading":
                     progress.steps += 1
-                progress.state = state
 
             async with HostServer(run, paths.socket):
                 async with proxy_relay(self.config.sandbox, paths):
@@ -564,7 +579,7 @@ class Clangy:
             if conv.game == game or result.timed_out or stats.backend_failed:
                 return result, stats
             game = conv.game
-            note = self._knowledge_note(game)  # type: ignore[arg-type]
+            note = next(n for n in reversed(conv.host_notes) if n.startswith(knowledge_note_start(game)))
             delivered.append(note)
             # The text of the run that called set_game is never shown, so the model must answer again
             prompt = f"{note} Now write your answer to the user's messages; don't refer to earlier drafts."
@@ -580,7 +595,29 @@ class Clangy:
         return "\n".join(lines)
 
     def _knowledge_note(self, game: Game) -> str:
-        return f"[host] This conversation is about {game.upper()}. Its knowledge is under knowledge/. Don't mention this note."
+        """Tells the model the game and its skills, like pi's own skill list, without touching the system prompt."""
+        lines = [f"{knowledge_note_start(game)} Its knowledge is under knowledge/. Don't mention this note."]
+        skills = self.skills(game)
+        if skills:
+            lines.append(
+                "Skills: read the matching SKILL.md before answering and follow it; "
+                "run its commands from the skill's folder."
+            )
+            lines += [f"- {name}: {description} ({path})" for name, description, path in skills]
+        return "\n".join(lines)
+
+    def skills(self, game: Game) -> list[tuple[str, str, str]]:
+        """Name, description and work folder path of every SKILL.md in the game's knowledge."""
+        found = []
+        for link, target in self.knowledge_links(game).items():
+            if target is None or not link.startswith("knowledge/"):
+                continue
+            for depth in ("", "*/", "*/*/"):
+                for skill_file in sorted(target.glob(f"{depth}SKILL.md")):
+                    name, description = skill_frontmatter(skill_file)
+                    path = f"{link}/{skill_file.relative_to(target).as_posix()}"
+                    found.append((name or skill_file.parent.name, description, path))
+        return found
 
     # Work folder and sandbox
 
@@ -712,9 +749,7 @@ class Clangy:
         backend = self.backends[conv.backend]
         while True:
             await asyncio.sleep(self.config.progress_interval)
-            if progress.state.startswith(QUEUED):
-                position = backend.queue_position(conv.key)
-                progress.state = f"{QUEUED}, position {position}" if position > 1 else QUEUED
+            progress.ahead = backend.ahead_of(conv.key)
             current = progress.render(self.config.max_retries)
             if current != shown:
                 await self.chat.edit(conv.thread_id, conv.progress_message_id, current)

@@ -107,3 +107,28 @@ async def test_set_game_ends_the_run_and_starts_it_again(tmp_path, backend, chat
     assert len(backend.requests) == 2, "no model call between set_game and the new run"
     assert "This conversation is about SE1" in json.dumps(backend.requests[1]["messages"][-1])
     assert chat.in_channel(2002)[0].current.startswith("SE1 answer.")
+
+
+@pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep is not installed")
+async def test_pi_grep_searches_linked_knowledge(tmp_path, backend, chat):
+    assert PI is not None
+    skills = tmp_path / "skills"
+    (skills / "se-dev-game-code" / "Data").mkdir(parents=True)
+    (skills / "se-dev-game-code" / "SKILL.md").write_text("---\nname: se-dev-game-code\ndescription: Game code\n---\n")
+    (skills / "se-dev-game-code" / "Data" / "MyWolfLogic.cs").write_text("class MyWolfLogic {}\n")
+    config = Config(
+        data_dir=tmp_path / "data",
+        backends=[BackendConfig(name="local", url=backend.url, model="m")],
+        channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True, game="se1")],
+        sandbox=SandboxConfig(firejail=False, path=os.environ["PATH"]),
+        knowledge={"se1": [KnowledgeSource(path=skills, link="knowledge/skills")]},
+        run_deadline=60,
+    )
+    backend.replies = [Reply(tool="grep", arguments={"pattern": "Wolf", "path": "knowledge"}), Reply("Wolves exist.")]
+    bot = Clangy(config, chat)
+    await bot.on_message(forum_post(SUPPORT, 2003, "Animals?"))
+    await bot.wait_idle()
+    await bot.close()
+    first = json.dumps(backend.requests[0]["messages"][-1])
+    assert "se-dev-game-code: Game code (knowledge/skills/se-dev-game-code/SKILL.md)" in first
+    assert "MyWolfLogic.cs" in json.dumps(backend.requests[1]["messages"][-1]), "grep follows the knowledge link"

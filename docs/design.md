@@ -82,9 +82,9 @@ One known gap: Qwen chat templates drop the reasoning of earlier turns, so after
 
 ## Progress and ETA
 
-The host edits the progress message in place every `progress_interval` (a minute), so users can tell the run is still going. Example: `⏳ Working on it: looking things up (step 3, 2 min so far). Answer expected in 1 minute, deadline in 8 minutes.` The step is the model turn, and the minute counter changes on every edit. Once the ETA has passed it says "taking longer than expected". ETA and deadline are Discord timestamps (`<t:unix:R>`), which clients count down on their own. States come from pi's event stream: reading, thinking, writing, looking things up, analyzing, preparing files, filing a ticket.
+The progress message only says when the answer is expected, as a Discord timestamp (`<t:unix:R>`) that clients count down on their own: `⏳ Answer expected in 1 minute.` It adds details only when something is off: `⏳ Waiting for 2 other answers first.` while queued behind other conversations, `⏳ Taking longer than expected, deadline in 8 minutes.` once the ETA has passed, and `(retry 1/3)` after a lost backend. The host checks it every `progress_interval` and edits it only when the text changes.
 
-ETA = queue position × average run time ÷ `parallel` + max(prompt tokens ÷ prompt speed + 500 ÷ generation speed, average run time). Runs with tool calls take many model turns, so the measured average run time of successful runs is the floor. The prompt token estimate is the new text ÷ 4, plus 3000 on a conversation's first run. Speeds start from the config and follow the backend's reported `timings` (llama.cpp) as a moving average. Requests that processed fewer than 500 prompt tokens don't count, since they measure overhead more than speed.
+ETA = runs ahead × average run time ÷ `parallel` + max(prompt tokens ÷ prompt speed + 500 ÷ generation speed, average run time). Runs with tool calls take many model turns, so the measured average run time of successful runs is the floor. The prompt token estimate is the new text ÷ 4, plus 3000 on a conversation's first run. Speeds start from the config and follow the backend's reported `timings` (llama.cpp) as a moving average. Requests that processed fewer than 500 prompt tokens don't count, since they measure overhead more than speed.
 
 Every run's timing and token counts go into `metrics.jsonl`, see Metrics.
 
@@ -101,6 +101,10 @@ A restart during a run turns that run's progress message into a failure note. Th
 ## Game version and knowledge
 
 A channel can fix the game (`game = "se1"`). Otherwise the agent asks when it isn't clear and calls `set_game`. The host records it, adds a `[host]` note, and immediately runs pi again in the same session with `knowledge/` linked to the matching tree. The text of the run that called `set_game` is discarded.
+
+When the game is known, the host note lists the skills in its knowledge: every `SKILL.md` up to two folders deep, with the name and description from its frontmatter and its path, like pi's own skill list. The model is told to read the matching `SKILL.md` and follow it. pi's own skill loading isn't used, because Clangy replaces pi's system prompt to keep it cache-stable, and the list depends on the game.
+
+The knowledge is linked into the work folder, and ripgrep and fd don't follow links by default, so `sandbox-bin/rg` and `sandbox-bin/fd`, first on the sandbox's `PATH`, add `--follow` for pi's grep and find.
 
 Each configured knowledge source of the game becomes a link in the work folder: `knowledge/skills`, `knowledge/books`, and the prepared data the skills expect in the home folder (`.se-dev`, `.se2-dev`). The links are resolved when each run starts and the other game's links are removed. The firejail whitelist contains only that game's targets.
 
