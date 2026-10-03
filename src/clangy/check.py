@@ -76,7 +76,8 @@ async def probe_sandbox(config: Config, config_path: Path, base: Path, network: 
     other.mkdir()
     secrets = [other, config_path.resolve(), Path.home() / ".ssh", Path.home() / ".pi" / "agent" / "auth.json"]
     hidden = [str(p) for p in secrets if p.exists()]
-    sources = [s.path for sources in config.knowledge.values() for s in sources if s.path and s.path.exists()]
+    all_sources = [*config.mounts, *(s for sources in config.knowledge.values() for s in sources)]
+    sources = [s.path for s in all_sources if s.path and s.path.exists()]
     readable = [p.resolve() for p in sources]
     proxy_socket = str(RunPaths(work).proxy_socket.relative_to(work)) if config.sandbox.proxy else None
     code = (
@@ -110,11 +111,14 @@ async def check(config: Config, config_path: Path) -> bool:
         print(f"  {backend.name}: {'ok' if healthy else 'UNREACHABLE'} ({backend.config.url})")
 
     print("Knowledge:")
-    for game, sources in config.knowledge.items():
-        links = Clangy(config, ConsoleChat()).knowledge_links(game)
+    live = Clangy(config, ConsoleChat())
+    groups = [("all", config.mounts, live.knowledge_links(None))]
+    groups += [(game, sources, live.knowledge_links(game)) for game, sources in config.knowledge.items()]
+    for name, sources, links in groups:
         for source in sources:
             ok &= links[source.link] is not None
-            print(f"  {game} {source.link}: {links[source.link] or 'MISSING'}")
+            print(f"  {name} {source.link}: {links[source.link] or 'MISSING'}")
+    await live.close()
 
     print("Sandbox:")
     sandbox_ok = True

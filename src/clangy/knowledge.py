@@ -48,6 +48,7 @@ def sync(config: Config) -> bool:
     mirrors = base / "mirrors"
     mirrors.mkdir(parents=True, exist_ok=True)
     repos = {game: [s for s in sources if s.url] for game, sources in config.knowledge.items()}
+    repos["common"] = [s for s in config.mounts if s.url]
     local: dict[str, Path] = {}
     heads: dict[str, str] = {}
     for sources in repos.values():

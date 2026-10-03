@@ -68,3 +68,7 @@ Knowledge mounted for conversations about that game. Each source is a link in th
 | `url` | A git repository mirrored by `clangy sync-knowledge`. The host needs read access, for example SSH keys for the private book repositories. |
 
 Each source has either `path` or `url`.
+
+## `[[mounts]]`
+
+Sources like the knowledge ones (`link` plus `path` or `url`), but linked into every conversation whatever the game. The nas mounts `~/repos` as `repos`, the ecosystem and plugin repositories the prompt refers to.

@@ -588,10 +588,12 @@ class Clangy:
         return self.conversation_dir(conv.thread_id) / "work"
 
     def knowledge_links(self, game: Game | None) -> dict[str, Path | None]:
-        """Work folder links of the game's knowledge; the other game's links map to None, to be removed."""
+        """Work folder links of the mounts and the game's knowledge; the other game's links map to None."""
         links: dict[str, Path | None] = {s.link: None for sources in self.config.knowledge.values() for s in sources}
-        for source in self.config.knowledge.get(game, []) if game else []:
-            target = source.path or self.config.data_dir / "knowledge" / "current" / game / source.link
+        sources = [("common", s) for s in self.config.mounts]
+        sources += [(game, s) for s in self.config.knowledge.get(game, [])] if game else []
+        for folder, source in sources:
+            target = source.path or self.config.data_dir / "knowledge" / "current" / folder / source.link
             # Resolved per run, so a run keeps one snapshot even if the daily sync swaps the tree
             links[source.link] = target.resolve() if target.exists() else None
         return links

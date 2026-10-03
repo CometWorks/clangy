@@ -709,3 +709,19 @@ async def test_dead_attachment_links_become_a_note(bot, chat):
     dead = Attachment(3, "old.png", 10, "https://cdn/expired")
     await bot.on_message(forum_post(QUIET_FORUM, 1060, "Picture", attachments=[dead]))
     assert bot.conversations[1060].pending[0].attachments == ["old.png could not be downloaded"]
+
+
+async def test_mounts_are_in_every_conversation(bot, config, tmp_path):
+    repos = tmp_path / "repos"
+    (repos / "CometWorks" / "magnetar").mkdir(parents=True)
+    config.mounts.append(KnowledgeSource(path=repos, link="repos"))
+    await bot.on_message(forum_post(QUIET_FORUM, 1070, "Question"))
+    await bot.on_message(message(1070, "@Clangy hi", parent_id=QUIET_FORUM, mentions_bot=True))
+    await bot.wait_idle()
+    spec = bot.agent.specs[0]
+    assert (spec.paths.work / "repos" / "CometWorks" / "magnetar").is_dir()
+    assert repos in spec.read_only
+    bot.agent.script = [tool("set_game", {"game": "se1"}, answer("")), answer("SE1 then.")]
+    await bot.on_message(message(1070, "@Clangy it's SE1", parent_id=QUIET_FORUM, mentions_bot=True))
+    await bot.wait_idle()
+    assert repos in bot.agent.specs[-1].read_only, "mounts stay when the game is set"

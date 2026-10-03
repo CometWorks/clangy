@@ -92,6 +92,8 @@ class Config(BaseModel):
     secret_markers: list[str] = Field(default_factory=lambda: ["se-dev-books", "se2-dev-books", "knowledge/books"])
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     knowledge: dict[Game, list[KnowledgeSource]] = Field(default_factory=dict)
+    mounts: list[KnowledgeSource] = Field(default_factory=list)
+    """Like knowledge, but linked into every conversation whatever the game, e.g. the ecosystem's repos."""
 
     def channel(self, channel_id: int) -> ChannelConfig | None:
         return next((c for c in self.channels if c.id == channel_id), None)

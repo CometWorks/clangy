@@ -53,6 +53,11 @@ mode = "support"
 initial_response = true
 initial_delay = 120.0
 
+# Ecosystem and plugin repos for every conversation, kept up to date by ~/repos/clone-or-pull
+[[mounts]]
+link = "repos"
+path = "/home/clangy/repos"
+
 [[knowledge.se1]]
 link = "knowledge/skills"
 path = "/home/clangy/skills/skills"
