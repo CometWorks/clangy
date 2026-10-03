@@ -64,6 +64,10 @@ cd ~/clangy && PATH=~/.pi/agent/bin:~/.local/share/pi-node/current/bin:$PATH ~/.
 
 The prepared folders are used in place, see `[[knowledge.*]]` in `~/clangy.toml`. Git sources (`url`) would be mirrored by `clangy sync-knowledge`, run daily by a timer or cron job; the nas uses none.
 
+The code skills run their scripts with `uv run` from their own `.venv`. In the sandbox the skills are read-only and offline, so `sandbox.env` makes uv use the venvs as they are (`UV_NO_SYNC`, `UV_OFFLINE`), and the sandbox may read uv's Python installs (the SE1 skills pin Python 3.11). After copying new skills, build their venvs once as `clangy`, outside the sandbox: run any of their `uv run` commands, or `uv sync --frozen` in each skill folder. Venvs copied from another machine don't work, they point to that machine's Python. Searches work from the prepared indexes; preparing, indexing, downloading and the mod and script listings (which need the installed game) don't work in the sandbox.
+
+The clangy user's own pi loads the same skills through `skills` in `~/.pi/agent/settings.json`.
+
 ## llama.cpp backend
 
 polaris serves one slot (`parallel = 1`). With more slots, set `parallel` to the server's `--parallel`. To keep each conversation's KV cache when several share a slot, start the server with `--slot-save-path` and set `slot_save = true`. Send all traffic to that server through Clangy, since slot pinning assumes Clangy decides which conversation owns which slot.

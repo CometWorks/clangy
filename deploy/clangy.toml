@@ -6,10 +6,20 @@ discord_token = ""
 [sandbox]
 firejail = true
 pi_command = ["/home/clangy/.pi/agent/bin/pi"]
-# pi's launcher looks for its Node.js under $HOME, which is the work folder in the sandbox
-path = "/home/clangy/.pi/agent/bin:/home/clangy/.local/share/pi-node/current/bin:/usr/bin:/bin"
-# Not all of ~/.pi/agent: auth.json and the user's own sessions stay hidden
-read_only = ["/home/clangy/.pi/agent/bin", "/home/clangy/.pi/agent/install", "/home/clangy/.local/share/pi-node"]
+# pi's launcher looks for its Node.js under $HOME, which is the work folder in the sandbox.
+# uv runs the skills' scripts.
+path = "/home/clangy/.pi/agent/bin:/home/clangy/.local/share/pi-node/current/bin:/home/clangy/.local/bin:/usr/bin:/bin"
+# Not all of ~/.pi/agent: auth.json and the user's own sessions stay hidden.
+# uv's Python installs back the skills' venvs (the SE1 skills pin Python 3.11).
+read_only = [
+    "/home/clangy/.pi/agent/bin",
+    "/home/clangy/.pi/agent/install",
+    "/home/clangy/.local/share/pi-node",
+    "/home/clangy/.local/bin",
+    "/home/clangy/.local/share/uv/python",
+]
+# The skills and their venvs are read-only: uv must use the venvs as they are, offline
+env = { UV_NO_SYNC = "1", UV_OFFLINE = "1", UV_PYTHON_DOWNLOADS = "never" }
 
 [[backends]]
 name = "polaris"

@@ -14,7 +14,7 @@ def spec(tmp_path: Path, sandbox: SandboxConfig, prompt: str = "[host] hi") -> R
 
 
 def test_firejail_command(tmp_path):
-    command = build_command(spec(tmp_path, SandboxConfig(read_only=["/opt/node"])), 4321)
+    command = build_command(spec(tmp_path, SandboxConfig(read_only=["/opt/node"], env={"UV_OFFLINE": "1"})), 4321)
     separator = command.index("--")
     jail, inner = command[:separator], command[separator + 1 :]
     assert jail[0] == "firejail" and "--net=none" in jail and "--noroot" in jail
@@ -22,7 +22,7 @@ def test_firejail_command(tmp_path):
     for path in ("/k", "/opt/node"):
         assert f"--read-only={path}" in jail
     assert inner[:2] == ["env", "-i"]
-    assert f"HOME={tmp_path}" in inner and "CLANGY_PORT=4321" in inner
+    assert f"HOME={tmp_path}" in inner and "CLANGY_PORT=4321" in inner and "UV_OFFLINE=1" in inner
     # Secrets from the host environment never reach the sandbox
     assert not any(arg.startswith(("DISCORD", "CLANGY_TEST_KEY")) for arg in inner)
     assert inner[-1] == "[host] hi"

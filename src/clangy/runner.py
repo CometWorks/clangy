@@ -125,6 +125,7 @@ def build_command(spec: RunSpec, port: int) -> list[str]:
         "CLANGY_SOCKET": str(spec.paths.socket.relative_to(spec.paths.work)),
         "CLANGY_PORT": str(port),
         "CLANGY_SYSTEM_PROMPT": str(spec.paths.system_prompt),
+        **spec.sandbox.env,
     }
     command = ["env", "-i", *(f"{k}={v}" for k, v in env.items()), *pi_arguments(spec)]
     if not spec.sandbox.firejail:

@@ -24,6 +24,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `pi_command` | `["pi"]` | Command that starts pi. |
 | `path` | `/usr/local/bin:/usr/bin:/bin` | `PATH` inside the sandbox. Must reach `node`, `pi` and `python3`. |
 | `read_only` | `[]` | Extra host paths the sandbox may read, typically the node installation that holds pi. |
+| `env` | `{}` | Extra environment variables inside the sandbox, e.g. `UV_OFFLINE = "1"` for skills run with `uv run`. |
 
 ## `[[backends]]`
 

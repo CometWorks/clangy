@@ -45,6 +45,8 @@ class SandboxConfig(BaseModel):
     """PATH inside the sandbox, must reach node, pi and python3."""
     read_only: list[str] = Field(default_factory=list)
     """Extra host paths the sandbox may read, e.g. the node installation."""
+    env: dict[str, str] = Field(default_factory=dict)
+    """Extra environment variables inside the sandbox, e.g. to keep uv offline."""
 
 
 class KnowledgeSource(BaseModel):
