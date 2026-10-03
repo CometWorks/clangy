@@ -47,6 +47,14 @@ Set `discord_token` in `~/clangy.toml` and the channels to serve, then on the ho
 systemctl --user start clangy
 ```
 
+The `clangy` crontab restarts it daily at 05:27 (Europe/Stockholm), ten minutes after `~/repos/clone-or-pull` updates the repos:
+
+```
+27 5 * * * XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart clangy
+```
+
+Cron doesn't set `XDG_RUNTIME_DIR`, which `systemctl --user` needs.
+
 Logs:
 
 ```bash
