@@ -1,6 +1,8 @@
 import argparse
+import asyncio
 import logging
 import os
+import sys
 from pathlib import Path
 
 from clangy.config import Config
@@ -32,7 +34,12 @@ def main() -> None:
         sync(config)
         return
 
+    from clangy.check import sandbox_problems
     from clangy.discord_bot import ClangyClient
+
+    if config.sandbox.firejail and (problems := asyncio.run(sandbox_problems(config, args.config))):
+        # Fail closed: without a working sandbox the agent would run with the bot's own access
+        sys.exit(f"Refusing to start, the sandbox doesn't work: {', '.join(problems)}. Run 'clangy check'.")
 
     ClangyClient(config).run(os.environ[config.token_env], log_handler=None)
 

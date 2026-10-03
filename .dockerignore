@@ -1,0 +1,10 @@
+.venv/
+.git/
+.idea/
+.github/
+__pycache__/
+tests/
+scripts/
+docs/
+data/
+config.toml

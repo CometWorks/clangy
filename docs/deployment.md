@@ -18,6 +18,28 @@ DISCORD_TOKEN=... uv run clangy --config config.toml run
 
 Run it as a systemd service with the token (and any backend API keys) in an environment file only the service user can read.
 
+## Docker (nas)
+
+`deploy/build.sh` builds the image and pushes it to `192.168.1.40:5000/clangy2` (`clangy` is v1's image). `deploy/compose.yml` runs it with `/srv/clangy/config.toml`, `/srv/clangy/data` and the token in `/srv/clangy/clangy.env`. Inside the container the data dir must be `/srv/clangy/data`, since firejail can whitelist only under roots such as `/srv` and `/opt`.
+
+**Open problem:** firejail 0.9.74 detects that it runs in a container and then starts the program without any sandboxing ("an existing sandbox was detected"), even with `--force`. In a default container the probe shows an open network and visible data. It's untested whether added privileges (`SYS_ADMIN`, unconfined seccomp and AppArmor) change that. Options:
+
+1. Run Clangy directly on the host as a systemd service with firejail from Debian. This matches the design and needs no container privileges.
+2. Keep Docker and use bubblewrap inside it. Needs a seccomp profile that allows user namespaces.
+3. Keep Docker without a per-conversation sandbox: an internal network with only the backend reachable. Conversations could then read each other's files.
+
+Clangy fails closed: with `sandbox.firejail = true`, `clangy run` probes the sandbox first and refuses to start if the network is reachable or other data is visible.
+
+## Checking a deployment
+
+```bash
+uv run clangy --config config.toml check
+```
+
+Without Discord, it checks the backends, the knowledge trees, the sandbox (a probe run through the real sandbox command line: no network, other data hidden, work folder writable, pi, node and python3 present) and one real answer.
+
+`clangy timings` summarizes the timing records of all conversations.
+
 ## Knowledge sync
 
 Daily cron, no inference:

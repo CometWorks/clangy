@@ -1,0 +1,11 @@
+services:
+  clangy:
+    image: 192.168.1.40:5000/clangy2:latest
+    container_name: clangy2
+    restart: unless-stopped
+    stop_grace_period: 10s
+    env_file: /srv/clangy/clangy.env
+    volumes:
+      - /srv/clangy/config.toml:/srv/clangy/config.toml:ro
+      - /srv/clangy/data:/srv/clangy/data
+    # TODO: firejail needs namespace and mount privileges inside the container, see docs/deployment.md

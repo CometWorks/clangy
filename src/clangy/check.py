@@ -62,7 +62,10 @@ async def probe_sandbox(config: Config, config_path: Path, base: Path) -> dict[s
     sandbox = config.sandbox.model_copy(update={"pi_command": ["python3", "-c", code]})
     spec = RunSpec(paths=RunPaths(work), backend=config.backends[0], sandbox=sandbox, prompt="")
     command = build_command(spec, 0)
-    process = await asyncio.create_subprocess_exec(*command, cwd=work, stdout=asyncio.subprocess.PIPE)
+    try:
+        process = await asyncio.create_subprocess_exec(*command, cwd=work, stdout=asyncio.subprocess.PIPE)
+    except FileNotFoundError:
+        return {f"{command[0]} installed": False}
     stdout, _ = await process.communicate()
     lines = stdout.decode().strip().splitlines()
     return json.loads(lines[-1]) if lines else {"probe ran": False}
@@ -105,6 +108,15 @@ async def check(config: Config, config_path: Path) -> bool:
     ok &= bool(record.get("ok"))
     print(f"  {'ok' if record.get('ok') else 'FAILED'} in {record.get('total_seconds')} s")
     return ok
+
+
+async def sandbox_problems(config: Config, config_path: Path) -> list[str]:
+    """Sandbox properties that don't hold. firejail runs programs unsandboxed when it detects a container."""
+    base = config.data_dir / "check" / "startup"
+    shutil.rmtree(base, ignore_errors=True)
+    results = await probe_sandbox(config, config_path, base)
+    shutil.rmtree(base, ignore_errors=True)
+    return [name for name, passed in results.items() if not passed]
 
 
 def main(config: Config, config_path: Path) -> None:
