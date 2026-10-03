@@ -13,6 +13,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 | `runner.py` | Writes pi's config, builds the firejail command line, runs pi with a deadline and reads its JSON event stream. |
 | `store.py` | Tickets, notes, plans and records in Clangy's own store. |
 | `knowledge.py` | The daily knowledge sync. |
+| `files.py` | Files the agent sends: validation, at-most-once sending, ZIP grouping. |
 | `text.py` | Discord texts: answer splitting, footer, progress and error messages. |
 | `pi/clangy.ts` | pi extension loaded in the sandbox. |
 | `prompts/system.md`, `guide/*.md` | The system prompt, and the guide files the agent reads on demand. |
@@ -92,14 +93,29 @@ A channel can fix the game (`game = "se1"`). Otherwise the agent asks when it is
 
 The agent may read `knowledge/books` but must never mention it. The system prompt says so, and the host also withholds any answer containing one of `secret_markers` (by default the book repository names and `knowledge/books`), replying "Sorry, I can't share that." instead.
 
+## Files
+
+Received: the host downloads message attachments (up to `attachment_max_bytes`) into the conversation's `files/received/`, which the sandbox sees read-only as `attachments/`. The agent can't fetch linked files; the prompt tells it to ask for an attachment instead.
+
+Sent: the agent writes files in its work folder (by convention `out/`) and calls `attach_files` once per group of related files. The host:
+
+- accepts only regular files inside the work folder, not hidden ones (so `.pi/` with the session and system prompt can't leak) and not symlinks pointing outside;
+- rejects files over 5 MB, files containing a `secret_markers` entry, and files already sent in an earlier answer (by work folder path, so a changed version needs a new name);
+- zips a group of more than 3 files into one archive and sends smaller groups as they are, so only related files end up together;
+- keeps an answer within Discord's 10 attachments and `answer_max_bytes` in total;
+- stages the files in `files/outbox/`. If the run succeeds they move to `files/sent/<run number>/` and go out with the last part of the answer. If it fails they are dropped and can be sent again.
+
+`files/` is outside the sandbox's writable area, so everything received and sent stays even if the agent deletes its own copies. Tickets point at it with a `files:` frontmatter entry.
+
 ## Store
 
-`<data_dir>/store` holds `tickets/T-0001.md`, `notes/N-0001.md`, `plans/P-0001.md` and `records/<thread>.md`. The agent reads it through the read-only `store` link and searches it with grep. Writes go through host tools, which assign numbers with exclusive file creation, validate the title and body, and add the thread link, game and attachment folder to the frontmatter. `ticket_add_report` appends a repeated report to an existing ticket.
+`<data_dir>/store` holds `tickets/T-0001.md`, `notes/N-0001.md`, `plans/P-0001.md` and `records/<thread>.md`. The agent reads it through the read-only `store` link and searches it with grep. Writes go through host tools, which assign numbers with exclusive file creation, validate the title and body, and add the thread link, game and the conversation's `files` folder to the frontmatter. `ticket_add_report` appends a repeated report to an existing ticket.
 
 ## Persisted state
 
 `<data_dir>/conversations/<thread id>/`:
 
 - `state.json`: channel, backend, game, status, queued messages, progress message id, retry count. Host only.
-- `work/`: the sandbox's folder: `attachments/`, the `store`, `guide` and `knowledge` links, `.pi/` (session, system prompt, pi config) and `.clangy/host.sock` during a run.
+- `files/`: `received/` attachments, `sent/<run>/` files sent in answers, `outbox/` while a run is staging files. Host only.
+- `work/`: the sandbox's folder: the files the agent writes (`out/`), the `attachments`, `store`, `guide` and `knowledge` links, `.pi/` (session, system prompt, pi config) and `.clangy/host.sock` during a run.
 - `metrics.jsonl`: per-request token and timing stats.

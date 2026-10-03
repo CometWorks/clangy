@@ -40,7 +40,7 @@ Unless the server uses a unified KV cache, the context is split between slots, s
 
 ## Discord
 
-v2 reuses v1's application, bot user and token, its intents (Message Content), OAuth2 scopes, bot permissions and per-channel member overwrites (see v1's `docs/Permissions.md`). v2 additionally needs Create Public Threads and Send Messages in Threads in mention-mode channels.
+v2 reuses v1's application, bot user and token, its intents (Message Content), OAuth2 scopes, bot permissions and per-channel member overwrites (see v1's `docs/Permissions.md`). v2 additionally needs Create Public Threads and Send Messages in Threads in mention-mode channels, and Attach Files wherever it answers.
 
 v1 found its channels from those overwrites. v2 reads them from `[[channels]]`, so the two must match at cutover.
 

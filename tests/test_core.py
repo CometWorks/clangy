@@ -315,15 +315,83 @@ async def test_ticket_tools_link_thread_and_attachments(bot, chat, config):
     await bot.wait_idle()
     work = bot.agent.specs[0].paths.work
     assert (work / "attachments" / "1015-info.log").read_bytes() == b"log data"
+    files = config.data_dir / "conversations" / "1015" / "files"
     assert "[host] Attachment from Alice: attachments/1015-info.log (1 KB)" in bot.agent.prompts[0]
     ticket = (config.data_dir / "store" / "tickets" / "T-0001.md").read_text()
     assert f"thread: https://discord.com/channels/{GUILD}/1015\n" in ticket
-    assert "game: se1\n" in ticket and f"attachments: {work / 'attachments'}\n" in ticket
+    assert "game: se1\n" in ticket and f"files: {files}\n" in ticket
     for prompt in ("@Clangy same", "@Clangy bad"):
         await bot.on_message(message(1015, prompt, parent_id=SE1_FORUM, mentions_bot=True))
         await bot.wait_idle()
     assert bot.agent.tool_results[1] == (200, {"text": "Added the report to T-0001."})
     assert bot.agent.tool_results[2] == (400, {"error": "title is empty"})
+
+
+async def test_files_are_sent_once_and_retained(bot, chat, config):
+    async def produce(agent: FakeAgent, spec: RunSpec) -> RunResult:
+        out = spec.paths.work / "out"
+        out.mkdir(exist_ok=True)
+        for name in ("a.txt", "b.txt", "c.txt", "d.txt", "summary.md"):
+            (out / name).write_text(name)
+        return await tool(
+            "attach_files",
+            {"paths": [f"out/{n}.txt" for n in "abcd"], "archive": "parts"},
+            tool("attach_files", {"paths": ["out/summary.md"]}, answer("Here you go.")),
+        )(agent, spec)
+
+    chat.files["https://cdn/info.log"] = b"log data"
+    bot.agent.script = [
+        produce,
+        tool("attach_files", {"paths": ["out/summary.md"]}, answer("Again.")),
+        tool("attach_files", {"paths": ["attachments/1020-info.log"]}, answer("Echo.")),
+    ]
+    attachment = Attachment(1, "info.log", 8, "https://cdn/info.log")
+    await bot.on_message(forum_post(SUPPORT, 1020, "Send me files", attachments=[attachment]))
+    await bot.wait_idle()
+    [reply] = chat.in_channel(1020)
+    assert reply.filenames == ["parts.zip", "summary.md"]
+    assert reply.current.startswith("Here you go.")
+    files = config.data_dir / "conversations" / "1020" / "files"
+    assert (files / "received" / "1020-info.log").read_bytes() == b"log data"
+    assert sorted(p.name for p in (files / "sent" / "0001").iterdir()) == ["parts.zip", "summary.md"]
+    assert bot.conversations[1020].sent_files == ["out/a.txt", "out/b.txt", "out/c.txt", "out/d.txt", "out/summary.md"]
+    assert (bot.agent.specs[0].paths.work / "attachments").resolve() in bot.agent.specs[0].read_only
+
+    for prompt in ("@Clangy again", "@Clangy echo"):
+        await bot.on_message(message(1020, prompt, parent_id=SUPPORT, mentions_bot=True))
+        await bot.wait_idle()
+    assert bot.agent.tool_results[2][0] == 400 and "already sent" in bot.agent.tool_results[2][1]["error"]
+    assert bot.agent.tool_results[3][0] == 400 and "outside your work folder" in bot.agent.tool_results[3][1]["error"]
+    assert all(m.filenames == [] for m in chat.in_channel(1020)[1:])
+
+
+async def test_files_of_a_failed_run_are_dropped(bot, chat, config):
+    async def produce_then_time_out(agent: FakeAgent, spec: RunSpec) -> RunResult:
+        (spec.paths.work / "out").mkdir(exist_ok=True)
+        (spec.paths.work / "out" / "a.txt").write_text("a")
+        agent.tool_results.append(await host(spec, "/tools/attach_files", {"paths": ["out/a.txt"]}))
+        return RunResult(timed_out=True)
+
+    bot.agent.script = [produce_then_time_out, tool("attach_files", {"paths": ["out/a.txt"]}, answer("Done."))]
+    await bot.on_message(forum_post(SUPPORT, 1021, "Files"))
+    await bot.wait_idle()
+    assert chat.in_channel(1021)[0].filenames == [] and bot.conversations[1021].sent_files == []
+    await bot.on_message(message(1021, "@Clangy retry", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
+    assert chat.in_channel(1021)[1].filenames == ["a.txt"]
+
+
+async def test_long_answer_carries_files_on_the_last_part(bot, chat):
+    async def produce(agent: FakeAgent, spec: RunSpec) -> RunResult:
+        (spec.paths.work / "out").mkdir(exist_ok=True)
+        (spec.paths.work / "out" / "a.txt").write_text("a")
+        long_answer = "\n\n".join("x" * 900 for _ in range(3))
+        return await tool("attach_files", {"paths": ["out/a.txt"]}, answer(long_answer))(agent, spec)
+
+    bot.agent.script = [produce]
+    await bot.on_message(forum_post(SUPPORT, 1022, "Long"))
+    await bot.wait_idle()
+    assert [m.filenames for m in chat.in_channel(1022)] == [[], ["a.txt"]]
 
 
 async def test_oversized_attachment_is_not_downloaded(bot, config):

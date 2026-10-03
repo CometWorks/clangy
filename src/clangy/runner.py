@@ -21,6 +21,7 @@ TOOLS = "read,grep,find,ls,bash"
 TOOL_STATES = {
     "bash": "analyzing",
     "set_game": "loading the game knowledge",
+    "attach_files": "preparing files",
     "ticket_create": "filing a ticket",
     "ticket_add_report": "updating a ticket",
     "note_create": "writing a note",

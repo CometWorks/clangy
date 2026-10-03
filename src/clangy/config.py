@@ -60,6 +60,8 @@ class Config(BaseModel):
     channels: list[ChannelConfig] = Field(default_factory=list)
     run_deadline: float = 600.0
     attachment_max_bytes: int = 25 * 1024**2
+    answer_max_bytes: int = 10 * 1024**2
+    """Total size of the files attached to one answer."""
     progress_interval: float = 10.0
     health_interval: float = 30.0
     max_retries: int = 3

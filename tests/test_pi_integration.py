@@ -30,13 +30,17 @@ async def test_pi_run_with_host_tool_and_stable_prefix(tmp_path, backend, chat):
     )
     bot = Clangy(config, chat)
     backend.replies = [
+        Reply(tool="bash", arguments={"command": "mkdir -p out && echo hi > out/notes.txt"}),
+        Reply(tool="attach_files", arguments={"paths": ["out/notes.txt"]}),
         Reply(tool="ticket_create", arguments={"title": "Crash on load", "body": "Details"}),
         Reply("Filed T-0001."),
         Reply("Second answer."),
     ]
     await bot.on_message(forum_post(SUPPORT, 2000, "My game crashes"))
     await bot.wait_idle()
-    assert chat.in_channel(2000)[0].current == f"Filed T-0001.\n\n{text.footer('Clangy')}"
+    first_reply = chat.in_channel(2000)[0]
+    assert first_reply.current == f"Filed T-0001.\n\n{text.footer('Clangy')}"
+    assert first_reply.files == [b"hi\n"]
     assert (tmp_path / "store" / "tickets" / "T-0001.md").exists()
 
     await bot.on_message(message(2000, "@Clangy thanks", parent_id=SUPPORT, mentions_bot=True))
@@ -44,13 +48,13 @@ async def test_pi_run_with_host_tool_and_stable_prefix(tmp_path, backend, chat):
     await bot.close()
     assert chat.in_channel(2000)[1].current.startswith("Second answer.")
 
-    first, second, third = backend.requests
+    first = backend.requests[0]
     system = first["messages"][0]
     assert system == {"role": "system", "content": SYSTEM_PROMPT.read_text()}
     names = {t["function"]["name"] for t in first["tools"]}
-    assert {"read", "grep", "find", "ls", "bash", "set_game", "ticket_create", "ticket_add_report"} <= names
+    assert {"read", "grep", "find", "ls", "bash", "set_game", "attach_files", "ticket_create"} <= names
     # Each request extends the previous one byte for byte, so the backend can reuse its KV cache
-    for earlier, later in ((first, second), (second, third)):
+    for earlier, later in zip(backend.requests, backend.requests[1:]):
         prefix = earlier["messages"]
         assert json.dumps(later["messages"][: len(prefix)]) == json.dumps(prefix)
         assert json.dumps(later["tools"]) == json.dumps(earlier["tools"])

@@ -45,6 +45,16 @@ const tools = [
 		parameters: Type.Object({ game: Type.Union([Type.Literal("se1"), Type.Literal("se2")]) }),
 	},
 	{
+		name: "attach_files",
+		description:
+			"Attach files from your work folder to your answer, max 5 MB each. Call once per group of related files; " +
+			"a group of more than 3 files is sent as one ZIP archive. Each file can be sent only once.",
+		parameters: Type.Object({
+			paths: Type.Array(Type.String(), { description: "Paths relative to the work folder" }),
+			archive: Type.Optional(Type.String({ description: "ZIP file name if the group gets archived" })),
+		}),
+	},
+	{
 		name: "ticket_create",
 		description: "Create a ticket from a problem report. Search store/tickets for duplicates first.",
 		parameters: Type.Object({ title, body }),

@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import re
 import shutil
 import time
 from collections.abc import Awaitable, Callable
@@ -18,6 +17,7 @@ from pydantic import BaseModel, Field
 from clangy import text
 from clangy.backend import Backend
 from clangy.config import ChannelConfig, Config, Game
+from clangy.files import FileError, Outbox, safe_filename
 from clangy.proxy import HostServer, ProxyRun, RunStats, ToolError
 from clangy.runner import PACKAGE_DIR, RunPaths, RunResult, RunSpec, free_port, run_pi, write_pi_config
 from clangy.store import Store, StoreError
@@ -62,9 +62,9 @@ class IncomingMessage:
 class Chat(Protocol):
     bot_name: str
 
-    async def send(self, channel_id: int, content: str) -> int: ...
+    async def send(self, channel_id: int, content: str, files: list[Path] | None = None) -> int: ...
 
-    async def edit(self, channel_id: int, message_id: int, content: str) -> None: ...
+    async def edit(self, channel_id: int, message_id: int, content: str, files: list[Path] | None = None) -> None: ...
 
     async def create_thread(self, channel_id: int, message_id: int, name: str) -> int: ...
 
@@ -93,6 +93,8 @@ class Conversation(BaseModel):
     retries: int = 0
     runs: int = 0
     host_notes: list[str] = Field(default_factory=list)
+    sent_files: list[str] = Field(default_factory=list)
+    """Work folder paths of the files already sent, each file goes out at most once."""
 
     @property
     def key(self) -> str:
@@ -118,10 +120,6 @@ class Progress:
         return f"{message} (retry {self.retry}/{max_retries})" if self.retry else message
 
 
-def safe_filename(name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".")[:100] or "file"
-
-
 def human_size(size: int) -> str:
     return f"{size / 1024**2:.1f} MB" if size >= 1024**2 else f"{max(1, size // 1024)} KB"
 
@@ -135,6 +133,7 @@ class Clangy:
         self.backends = {b.name: Backend(b) for b in config.backends}
         self.conversations: dict[int, Conversation] = {}
         self._workers: dict[int, asyncio.Task] = {}
+        self._outboxes: dict[int, Outbox] = {}
         self._wake: dict[int, bool] = {}
         self._next_backend = 0
         self._http: aiohttp.ClientSession | None = None
@@ -155,6 +154,10 @@ class Clangy:
 
     def conversation_dir(self, thread_id: int) -> Path:
         return self.config.data_dir / "conversations" / str(thread_id)
+
+    def files_dir(self, thread_id: int) -> Path:
+        """Every file received from and sent to the conversation, kept out of the sandbox's reach."""
+        return self.conversation_dir(thread_id) / "files"
 
     def save(self, conv: Conversation) -> None:
         path = self.conversation_dir(conv.thread_id) / "state.json"
@@ -225,7 +228,7 @@ class Clangy:
 
     async def _pending(self, conv: Conversation, msg: IncomingMessage) -> PendingMessage:
         notes = []
-        folder = self.conversation_dir(conv.thread_id) / "work" / "attachments"
+        folder = self.files_dir(conv.thread_id) / "received"
         for attachment in msg.attachments:
             name = f"{msg.id}-{safe_filename(attachment.filename)}"
             if attachment.size > self.config.attachment_max_bytes:
@@ -283,6 +286,15 @@ class Clangy:
         consumed = len(conv.pending)
         delivered = list(conv.host_notes)
         self._snapshot_session(conv)
+        files = self.files_dir(conv.thread_id)
+        outbox = Outbox(
+            work=self._work_dir(conv),
+            staging=files / "outbox",
+            sent=set(conv.sent_files),
+            total_bytes=self.config.answer_max_bytes,
+            markers=self.config.secret_markers,
+        )
+        self._outboxes[conv.thread_id] = outbox
         try:
             await backend.acquire(conv.key)
             started = time.monotonic()
@@ -298,10 +310,17 @@ class Clangy:
         finally:
             updater.cancel()
         self._log_metrics(conv, result, stats)
-        await self._finish(conv, result, stats, consumed, delivered)
+        del self._outboxes[conv.thread_id]
+        await self._finish(conv, result, stats, consumed, delivered, outbox)
 
     async def _finish(
-        self, conv: Conversation, result: RunResult, stats: RunStats, consumed: int, delivered: list[str]
+        self,
+        conv: Conversation,
+        result: RunResult,
+        stats: RunStats,
+        consumed: int,
+        delivered: list[str],
+        outbox: Outbox,
     ) -> None:
         bot = self.chat.bot_name
         if result.answer is not None and not stats.backend_failed:
@@ -310,9 +329,12 @@ class Clangy:
             conv.status = "idle"
             conv.retries = 0
             conv.runs += 1
+            attachments = outbox.commit(self.files_dir(conv.thread_id) / "sent" / f"{conv.runs:04d}")
+            conv.sent_files = sorted(outbox.sent)
             self.save(conv)
-            await self._post_answer(conv, self._guard(result.answer))
+            await self._post_answer(conv, self._guard(result.answer), attachments)
             return
+        shutil.rmtree(outbox.staging, ignore_errors=True)
         self._restore_session(conv)
         if stats.backend_failed:
             if conv.retries >= self.config.max_retries:
@@ -388,10 +410,16 @@ class Clangy:
     def _prepare_work_dir(self, conv: Conversation) -> RunPaths:
         paths = RunPaths(self._work_dir(conv))
         paths.pi_dir.mkdir(parents=True, exist_ok=True)
-        (paths.work / "attachments").mkdir(exist_ok=True)
+        received = self.files_dir(conv.thread_id) / "received"
+        received.mkdir(parents=True, exist_ok=True)
         knowledge = self.knowledge_path(conv.game) if conv.game else None
         # The links are refreshed per run, so a run sees one knowledge snapshot even if the daily sync swaps it
-        links = {"store": self.store.root.resolve(), "guide": GUIDE_DIR, "knowledge": knowledge}
+        links = {
+            "attachments": received.resolve(),
+            "store": self.store.root.resolve(),
+            "guide": GUIDE_DIR,
+            "knowledge": knowledge,
+        }
         for name, target in links.items():
             link = paths.work / name
             if link.is_symlink():
@@ -406,7 +434,7 @@ class Clangy:
         return paths
 
     def _read_only_paths(self, paths: RunPaths) -> list[Path]:
-        names = ("store", "guide", "knowledge")
+        names = ("attachments", "store", "guide", "knowledge")
         return [(paths.work / n).resolve() for n in names if (paths.work / n).is_symlink()]
 
     def _snapshot_session(self, conv: Conversation) -> None:
@@ -432,7 +460,7 @@ class Clangy:
         async def handle(name: str, params: dict) -> str:
             try:
                 return self._tool(conv, name, params)
-            except (StoreError, KeyError, TypeError) as e:
+            except (StoreError, FileError, KeyError, TypeError) as e:
                 raise ToolError(str(e)) from e
 
         return handle
@@ -441,12 +469,14 @@ class Clangy:
         meta = {"thread": conv.url}
         if conv.game:
             meta["game"] = conv.game
-        attachments = self._work_dir(conv) / "attachments"
-        if attachments.is_dir() and any(attachments.iterdir()):
-            meta["attachments"] = str(attachments)
+        files = self.files_dir(conv.thread_id)
+        if any(files.glob("*/*")):
+            meta["files"] = str(files)
         match name:
             case "set_game":
                 return self._set_game(conv, params["game"])
+            case "attach_files":
+                return self._outboxes[conv.thread_id].add(params["paths"], params.get("archive"))
             case "ticket_create" | "note_create" | "plan_create":
                 doc_id = self.store.create(name.removesuffix("_create"), params["title"], params["body"], meta)
                 return f"Created {doc_id}."
@@ -474,20 +504,21 @@ class Clangy:
             return text.refused()
         return answer
 
-    async def _show(self, conv: Conversation, content: str) -> None:
+    async def _show(self, conv: Conversation, content: str, files: list[Path] | None = None) -> None:
         if conv.progress_message_id is None:
-            conv.progress_message_id = await self.chat.send(conv.thread_id, content)
+            conv.progress_message_id = await self.chat.send(conv.thread_id, content, files)
             self.save(conv)
         else:
-            await self.chat.edit(conv.thread_id, conv.progress_message_id, content)
+            await self.chat.edit(conv.thread_id, conv.progress_message_id, content, files)
 
-    async def _post_answer(self, conv: Conversation, answer: str) -> None:
+    async def _post_answer(self, conv: Conversation, answer: str, files: list[Path]) -> None:
+        """Posts the answer, replacing the progress message; the files go with the last part."""
         parts = text.answer_parts(answer, text.footer(self.chat.bot_name))
-        await self._show(conv, parts[0])
+        await self._show(conv, parts[0], files if len(parts) == 1 else None)
         conv.progress_message_id = None
         self.save(conv)
-        for part in parts[1:]:
-            await self.chat.send(conv.thread_id, part)
+        for i, part in enumerate(parts[1:], start=2):
+            await self.chat.send(conv.thread_id, part, files if i == len(parts) else None)
 
     async def _update_progress(self, conv: Conversation, progress: Progress, shown: str) -> None:
         backend = self.backends[conv.backend]

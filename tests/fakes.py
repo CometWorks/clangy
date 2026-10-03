@@ -100,10 +100,17 @@ class Sent:
     message_id: int
     content: str
     edits: list[str] = field(default_factory=list)
+    files: list[bytes] = field(default_factory=list)
+    filenames: list[str] = field(default_factory=list)
 
     @property
     def current(self) -> str:
         return self.edits[-1] if self.edits else self.content
+
+    def attach(self, files: list[Path] | None) -> None:
+        for file in files or []:
+            self.files.append(file.read_bytes())
+            self.filenames.append(file.name)
 
 
 class FakeChat:
@@ -118,14 +125,17 @@ class FakeChat:
     def in_channel(self, channel_id: int) -> list[Sent]:
         return [m for m in self.messages.values() if m.channel_id == channel_id]
 
-    async def send(self, channel_id: int, content: str) -> int:
+    async def send(self, channel_id: int, content: str, files: list[Path] | None = None) -> int:
         self._next_id += 1
-        self.messages[self._next_id] = Sent(channel_id, self._next_id, content)
+        self.messages[self._next_id] = sent = Sent(channel_id, self._next_id, content)
+        sent.attach(files)
         return self._next_id
 
-    async def edit(self, channel_id: int, message_id: int, content: str) -> None:
-        assert self.messages[message_id].channel_id == channel_id
-        self.messages[message_id].edits.append(content)
+    async def edit(self, channel_id: int, message_id: int, content: str, files: list[Path] | None = None) -> None:
+        sent = self.messages[message_id]
+        assert sent.channel_id == channel_id
+        sent.edits.append(content)
+        sent.attach(files)
 
     async def create_thread(self, channel_id: int, message_id: int, name: str) -> int:
         self.threads.append((channel_id, message_id, name))

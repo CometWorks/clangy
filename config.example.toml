@@ -4,6 +4,7 @@ data_dir = "/srv/clangy"
 token_env = "DISCORD_TOKEN"
 run_deadline = 600.0
 attachment_max_bytes = 26214400
+answer_max_bytes = 10485760
 progress_interval = 10.0
 health_interval = 30.0
 max_retries = 3
