@@ -123,6 +123,8 @@ class FakeChat:
         self.messages: dict[int, Sent] = {}
         self.threads: list[tuple[int, int, str]] = []
         self.files: dict[str, bytes] = {}
+        self.channel_history: dict[int, list] = {}
+        self.history_calls: list[tuple] = []
         self._next_id = 9000
 
     def in_channel(self, channel_id: int) -> list[Sent]:
@@ -143,6 +145,10 @@ class FakeChat:
     async def create_thread(self, channel_id: int, message_id: int, name: str) -> int:
         self.threads.append((channel_id, message_id, name))
         return message_id
+
+    async def history(self, channel_id: int, before_id: int, limit: int, after) -> list:
+        self.history_calls.append((channel_id, before_id, limit, after))
+        return self.channel_history.get(channel_id, [])[-limit:]
 
     async def download(self, attachment: Attachment, path: Path) -> None:
         path.write_bytes(self.files[attachment.url])

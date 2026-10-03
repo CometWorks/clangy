@@ -617,3 +617,31 @@ async def test_edits_still_work_after_restart(config, chat):
     second.on_edit(message(1037, "Better question", parent_id=QUIET_FORUM, id=1037))
     assert second.conversations[1037].pending[0].text == "Better question"
     await second.close()
+
+
+async def test_mention_brings_the_recent_channel_chat_along(bot, chat):
+    chat.files["https://cdn/fox.png"] = b"png"
+    chat.channel_history[MENTION] = [
+        message(MENTION, "Little", id=601),
+        message(MENTION, "an earlier answer", id=602, from_self=True),
+        message(
+            MENTION, "brown", id=603, author="Bob", attachments=[Attachment(9, "fox.png", 3, "https://cdn/fox.png")]
+        ),
+        message(MENTION, "fox", id=604),
+    ]
+    await bot.on_message(message(MENTION, "@Clangy Do we have this animal in SE1?", id=605, mentions_bot=True))
+    await bot.wait_idle()
+    [(channel_id, before_id, limit, after)] = chat.history_calls
+    assert (channel_id, before_id, limit) == (MENTION, 605, 20)
+    assert after == datetime(2026, 10, 3, 11, 0, tzinfo=timezone.utc)
+    prompt = bot.agent.prompts[0]
+    lines = [line for line in prompt.splitlines() if not line.startswith("[host] 20")]
+    assert lines == [
+        "Alice: Little",
+        "Bob: brown",
+        "[host] Attachment from Bob: attachments/603-fox.png (1 KB)",
+        "Alice: fox",
+        "Alice: @Clangy Do we have this animal in SE1?",
+    ]
+    bot.on_edit(message(MENTION, "Big", id=601))
+    assert "it now reads: Big" in bot.conversations[605].host_notes[-1], "context messages are tracked for edits"

@@ -8,7 +8,7 @@ import shutil
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, Protocol
 
@@ -68,6 +68,10 @@ class Chat(Protocol):
     async def edit(self, channel_id: int, message_id: int, content: str, files: list[Path] | None = None) -> None: ...
 
     async def create_thread(self, channel_id: int, message_id: int, name: str) -> int: ...
+
+    async def history(self, channel_id: int, before_id: int, limit: int, after: datetime) -> list[IncomingMessage]:
+        """Channel messages before a message, oldest first."""
+        ...
 
     async def download(self, attachment: Attachment, path: Path) -> None: ...
 
@@ -228,12 +232,7 @@ class Clangy:
         channel = self.config.channel(conv.channel_id) if conv else None
         if conv is None or channel is None:
             return
-        if channel.mode == "record":
-            files = "".join(f"\n- attachment: {a.filename}" for a in msg.attachments)
-            self._record(conv, msg.author, msg.created, msg.text + files, msg.thread_name)
-        conv.known[msg.id] = KnownMessage(author=msg.author, text=msg.text, created=msg.created)
-        self._message_threads[msg.id] = conv.thread_id
-        conv.pending.append(await self._pending(conv, msg))
+        await self._add_message(conv, channel, msg)
         if msg.mentions_bot:
             self._cancel_first_answer(conv)
             conv.retries = 0
@@ -252,9 +251,25 @@ class Clangy:
         channel = self.config.channel(msg.channel_id)
         if channel is None or channel.mode != "mention" or not msg.mentions_bot:
             return None
+        # The chat right before the mention is its context, e.g. a screenshot posted just before
+        after = msg.created - timedelta(seconds=channel.history_age)
+        earlier = await self.chat.history(msg.channel_id, msg.id, channel.history_messages, after)
         name = " ".join(msg.text.split())[:90] or f"Question from {msg.author}"
         thread_id = await self.chat.create_thread(msg.channel_id, msg.id, name)
-        return self._new_conversation(thread_id, channel, msg.guild_id)
+        conv = self._new_conversation(thread_id, channel, msg.guild_id)
+        for message in earlier:
+            if not message.from_self:
+                await self._add_message(conv, channel, message)
+        return conv
+
+    async def _add_message(self, conv: Conversation, channel: ChannelConfig, msg: IncomingMessage) -> None:
+        """Queues a message for the next run and remembers it for edits and deletions."""
+        if channel.mode == "record":
+            files = "".join(f"\n- attachment: {a.filename}" for a in msg.attachments)
+            self._record(conv, msg.author, msg.created, msg.text + files, msg.thread_name)
+        conv.known[msg.id] = KnownMessage(author=msg.author, text=msg.text, created=msg.created)
+        self._message_threads[msg.id] = conv.thread_id
+        conv.pending.append(await self._pending(conv, msg))
 
     def _schedule_first_answer(self, conv: Conversation, delay: float) -> None:
         """(Re)starts the wait before the first answer to a new forum thread; any activity restarts it."""

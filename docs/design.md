@@ -31,7 +31,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 ### When Clangy responds
 
 - A new forum post in a `support` or `record` channel starts a conversation. It gets an answer only if `initial_response` is on.
-- In a `mention` channel, a message mentioning Clangy starts a thread from that message. The thread is the conversation, and Clangy never writes in the channel itself.
+- In a `mention` channel, a message mentioning Clangy starts a thread from that message. The thread is the conversation, and Clangy never writes in the channel itself. The channel's recent messages before the mention (`history_messages`, `history_age`) go along as context, attachments included, since people often write the question across several messages or post a screenshot first.
 - Inside known conversations, every message is queued, and only mentions trigger a run.
 - With `initial_delay`, the first answer to a new forum thread waits until the thread has been quiet that long; every message, edit or deletion restarts the wait, and nothing is posted meanwhile. A mention cancels the wait and is answered right away. A wait cut short by a restart is dropped.
 - Threads Clangy doesn't know (started while it was down, or by v1) are ignored. Nothing is caught up after a restart.

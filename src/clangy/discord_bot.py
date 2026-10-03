@@ -1,6 +1,7 @@
 """discord.py adapter: turns gateway events into core messages and implements the Chat protocol."""
 
 import logging
+from datetime import datetime
 from pathlib import Path
 
 import aiohttp
@@ -50,6 +51,12 @@ class DiscordChat:
         assert isinstance(channel, discord.TextChannel)
         thread = await channel.get_partial_message(message_id).create_thread(name=name[:100])
         return thread.id
+
+    async def history(self, channel_id: int, before_id: int, limit: int, after: datetime) -> list[IncomingMessage]:
+        channel = await self._channel(channel_id)
+        assert self.client.user is not None
+        newest_first = channel.history(limit=limit, before=discord.Object(before_id), after=after, oldest_first=False)
+        return [incoming(m, self.client.user) async for m in newest_first][::-1]
 
     async def download(self, attachment: Attachment, path: Path) -> None:
         size = 0
