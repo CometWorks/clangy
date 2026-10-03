@@ -70,8 +70,6 @@ polaris serves one slot (`parallel = 1`). With more slots, set `parallel` to the
 
 ## Discord
 
-v2 reuses v1's application, bot user and token, its intents (Message Content), OAuth2 scopes, bot permissions and per-channel member overwrites (see v1's `docs/Permissions.md`). v2 also needs Create Public Threads and Send Messages in Threads in mention-mode channels, and Attach Files wherever it answers.
+v2 uses the bot registration v1 had (`Clangy#0168`), with its intents (Message Content), OAuth2 scopes, bot permissions and per-channel member overwrites (see v1's `docs/Permissions.md`). v2 also needs Create Public Threads and Send Messages in Threads in mention-mode channels, and Attach Files wherever it answers. v1 is retired.
 
-v1 found its channels from those overwrites. v2 reads them from `[[channels]]`, so the two must match at cutover.
-
-v1 and v2 can't share a token, because both would answer. Test with a separate test application and server first, then stop v1 and start v2 in one step. Threads v1 started are never continued.
+v2 acts only in the channels listed in `[[channels]]`; keep the member overwrites in line with that list. Threads v1 started are never continued.
