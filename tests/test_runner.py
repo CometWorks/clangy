@@ -98,3 +98,11 @@ async def test_run_pi_deadline(tmp_path):
     sandbox = fake_pi(tmp_path, "import time; time.sleep(30)")
     result = await run_pi(spec(tmp_path, sandbox), 1, 0.3, lambda s: None)
     assert result.timed_out and result.answer is None
+
+
+def test_host_tools_match_the_extension():
+    import re
+
+    from clangy.runner import EXTENSION, HOST_TOOLS
+
+    assert re.findall(r'name: "(\w+)"', EXTENSION.read_text()) == HOST_TOOLS

@@ -16,7 +16,9 @@ log = logging.getLogger(__name__)
 
 PACKAGE_DIR = Path(__file__).parent
 EXTENSION = PACKAGE_DIR / "pi" / "clangy.ts"
-TOOLS = "read,grep,find,ls,bash"
+HOST_TOOLS = ["set_game", "attach_files", "ticket_create", "ticket_add_report", "note_create", "plan_create"]
+"""Registered by pi/clangy.ts. pi 1.x applies --tools to extension tools too, so they must be listed."""
+TOOLS = ",".join(["read", "grep", "find", "ls", "bash", *HOST_TOOLS])
 
 TOOL_STATES = {
     "bash": "analyzing",
@@ -132,7 +134,6 @@ def build_command(spec: RunSpec, port: int) -> list[str]:
         "--net=none", "--nosound", "--no3d", "--nodvd", "--notv", "--novideo", "--nou2f",
         "--caps.drop=all", "--nonewprivs", "--noroot", "--seccomp",
         "--private-dev", "--private-tmp",
-        f"--rlimit-as={spec.sandbox.memory_limit}",
         f"--whitelist={spec.paths.work}", f"--read-write={spec.paths.work}",
     ]  # fmt: skip
     read_only = [*spec.read_only, PACKAGE_DIR, *map(Path, spec.sandbox.read_only)]

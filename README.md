@@ -10,12 +10,12 @@ Each Discord thread runs a [pi](https://pi.dev) agent in its own firejail sandbo
 uv sync
 uv run pytest
 cp config.example.toml config.toml   # then edit
-DISCORD_TOKEN=... uv run clangy run
+uv run clangy run                    # token in config.toml or DISCORD_TOKEN
 ```
 
 ## Docs
 
 - [Design](docs/design.md): how a run works, sandbox, prompt caching, retries, knowledge
 - [Configuration](docs/configuration.md)
-- [Deployment](docs/deployment.md)
+- [Deployment](docs/deployment.md): systemd service on the nas, `deploy/deploy.sh`
 - [Testing](docs/testing.md)

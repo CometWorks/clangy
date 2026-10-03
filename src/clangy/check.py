@@ -19,7 +19,8 @@ try:
     result["network blocked"] = False
 except OSError:
     result["network blocked"] = True
-result["config and other data hidden"] = not any(os.path.exists(p) for p in hidden)
+result["config, keys and other data hidden"] = not any(os.path.exists(p) for p in hidden)
+result["knowledge readable"] = all(os.access(p, os.R_OK) and os.listdir(p) for p in readable)
 try:
     open(os.path.join(work, "probe.txt"), "w").write("ok")
     result["work folder writable"] = True
@@ -58,9 +59,13 @@ async def probe_sandbox(config: Config, config_path: Path, base: Path) -> dict[s
     work.mkdir(parents=True)
     other = base / "probe" / "other-conversation"
     other.mkdir()
-    code = f"work, hidden = {str(work)!r}, {[str(other), str(config_path.resolve())]!r}\n{PROBE}"
+    secrets = [other, config_path.resolve(), Path.home() / ".ssh", Path.home() / ".pi" / "agent" / "auth.json"]
+    hidden = [str(p) for p in secrets if p.exists()]
+    sources = [s.path for sources in config.knowledge.values() for s in sources if s.path and s.path.exists()]
+    readable = [p.resolve() for p in sources]
+    code = f"work, hidden, readable = {str(work)!r}, {hidden!r}, {[str(p) for p in readable]!r}\n{PROBE}"
     sandbox = config.sandbox.model_copy(update={"pi_command": ["python3", "-c", code]})
-    spec = RunSpec(paths=RunPaths(work), backend=config.backends[0], sandbox=sandbox, prompt="")
+    spec = RunSpec(paths=RunPaths(work), backend=config.backends[0], sandbox=sandbox, prompt="", read_only=readable)
     command = build_command(spec, 0)
     try:
         process = await asyncio.create_subprocess_exec(*command, cwd=work, stdout=asyncio.subprocess.PIPE)
@@ -85,14 +90,22 @@ async def check(config: Config, config_path: Path) -> bool:
         print(f"  {backend.name}: {'ok' if healthy else 'UNREACHABLE'} ({backend.config.url})")
 
     print("Knowledge:")
-    for game in ("se1", "se2"):
-        path = config.data_dir / "knowledge" / "current" / game
-        print(f"  {game}: {path.resolve() if path.exists() else 'missing'}")
+    for game, sources in config.knowledge.items():
+        links = Clangy(config, ConsoleChat()).knowledge_links(game)
+        for source in sources:
+            ok &= links[source.link] is not None
+            print(f"  {game} {source.link}: {links[source.link] or 'MISSING'}")
 
     print("Sandbox:")
+    sandbox_ok = True
     for name, passed in (await probe_sandbox(config, config_path, base)).items():
-        ok &= passed
+        sandbox_ok &= passed
         print(f"  {name}: {'ok' if passed else 'FAILED'}")
+    if config.sandbox.firejail and not sandbox_ok:
+        print("Answer:\n  skipped, the sandbox doesn't work")
+        await bot.close()
+        return False
+    ok &= sandbox_ok
 
     print("Answer:")
     question = "This is a deployment check. Reply with one short sentence saying you are ready."

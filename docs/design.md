@@ -12,7 +12,8 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 | `proxy.py` | Per-run HTTP server on a unix socket inside the work folder: forwards chat completions to the pinned backend and serves the host tools. |
 | `runner.py` | Writes pi's config, builds the firejail command line, runs pi with a deadline and reads its JSON event stream. |
 | `store.py` | Tickets, notes, plans and records in Clangy's own store. |
-| `knowledge.py` | The daily knowledge sync. |
+| `knowledge.py` | The daily sync of knowledge kept in git repositories. |
+| `check.py` | `clangy check` and the sandbox probe that `clangy run` requires to pass. |
 | `files.py` | Files the agent sends: validation, at-most-once sending, ZIP grouping. |
 | `text.py` | Discord texts: answer splitting, footer, progress and error messages. |
 | `pi/clangy.ts` | pi extension loaded in the sandbox. |
@@ -22,7 +23,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 
 1. A trigger (see below) posts a progress message right away and starts the conversation's worker. A trigger during a run sets a flag, and the worker runs again afterwards.
 2. The worker waits for a slot on the conversation's backend. The progress message shows the queue position and an ETA.
-3. The host snapshots the pi session file, refreshes the work folder links (`store`, `guide`, `knowledge`), writes pi's `models.json` and `settings.json`, and opens the host socket.
+3. The host snapshots the pi session file, refreshes the work folder links (`attachments`, `store`, `guide`, the game's knowledge), writes pi's `models.json` and `settings.json`, and opens the host socket.
 4. pi runs in firejail with `--mode json --print --session <file>`. The prompt is a `[host]` timestamp line, then every queued message as `Name: text` plus attachment notes.
 5. On success the queued messages are dropped, the answer replaces the progress message, and parts over 2000 characters go into follow-up messages. Every answer ends with the fixed mention reminder.
 6. On a timeout, backend loss or other failure the session file is restored from the snapshot, so partial output never reaches the next run, and the queued messages stay queued.
@@ -42,7 +43,8 @@ pi runs as `firejail ... -- env -i <vars> pi ...`:
 - `--net=none`: the sandbox has only its own loopback. The pi extension listens on `127.0.0.1:$CLANGY_PORT` and pipes connections to the host socket in the work folder. That socket is the only way out.
 - The environment is replaced. The Discord token and backend API keys stay on the host. The proxy adds the API key to forwarded requests.
 - The work folder is the only writable path. The store, the guide, the conversation's knowledge snapshot, the package and the configured `sandbox.read_only` paths (node and pi) are read-only.
-- `--rlimit-as`, no capabilities, no root, seccomp, private `/dev` and `/tmp`.
+- No capabilities, no root, seccomp, private `/dev` and `/tmp`.
+- No per-sandbox memory limit: firejail's `--rlimit-as` breaks Node.js, whose WebAssembly reserves large address ranges. The systemd unit caps the whole service with `MemoryMax` and `TasksMax` instead.
 
 The allowlist the ticket mentions is just the pinned backend for now. The agent must not download anything, so nothing else is reachable. Add a CONNECT allowlist to `proxy.py` when a second host is needed.
 
@@ -87,9 +89,9 @@ A restart during a run turns that run's progress message into a failure note. Th
 
 A channel can fix the game (`game = "se1"`). Otherwise the agent asks when it isn't clear and calls `set_game`. The host records it, adds a `[host]` note, and immediately runs pi again in the same session with `knowledge/` linked to the matching tree. The text of the run that called `set_game` is discarded.
 
-`knowledge/` links to `<data_dir>/knowledge/current/<game>`, resolved when each run starts, so a run keeps one snapshot even if the sync swaps trees meanwhile. The firejail whitelist contains only that game's tree.
+Each configured knowledge source of the game becomes a link in the work folder: `knowledge/skills`, `knowledge/books`, and the prepared data the skills expect in the home folder (`.se-dev`, `.se2-dev`). The links are resolved when each run starts and the other game's links are removed. The firejail whitelist contains only that game's targets.
 
-`clangy sync-knowledge` (daily cron) keeps git mirrors of the configured repositories. When any HEAD changed, it exports all of them into a new `releases/<timestamp>` folder and swaps the `current` symlink with an atomic rename. It keeps the current and the previous release.
+Sources are folders used in place (the nas setup) or git repositories. `clangy sync-knowledge` (daily) keeps mirrors of the repositories. When any HEAD changed, it exports all of them into a new `releases/<timestamp>` folder and swaps the `current` symlink with an atomic rename, keeping the current and the previous release. Since links resolve per run, a run keeps one snapshot even if the sync swaps trees meanwhile.
 
 ## The books
 
@@ -141,5 +143,5 @@ The host socket is bound through `/proc/self/fd/<dir fd>/host.sock` and pi conne
 
 - `state.json`: channel, backend, game, status, queued messages, progress message id, retry count. Host only.
 - `files/`: `received/` attachments, `sent/<run>/` files sent in answers, `outbox/` while a run is staging files. Host only.
-- `work/`: the sandbox's folder: the files the agent writes (`out/`), the `attachments`, `store`, `guide` and `knowledge` links, `.pi/` (session, system prompt, pi config) and `.clangy/host.sock` during a run.
+- `work/`: the sandbox's folder: the files the agent writes (`out/`), the `attachments`, `store`, `guide` and knowledge links, `.pi/` (session, system prompt, pi config) and `.clangy/host.sock` during a run.
 - `metrics.jsonl`: per-request token and timing stats.

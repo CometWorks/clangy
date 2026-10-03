@@ -7,6 +7,9 @@ from pathlib import Path
 
 from clangy.config import Config
 
+EX_CONFIG = 78
+"""Exit status for a broken setup; the systemd unit doesn't restart on it."""
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="clangy", description="Clangy v2, the Pulsar Discord support bot")
@@ -39,9 +42,14 @@ def main() -> None:
 
     if config.sandbox.firejail and (problems := asyncio.run(sandbox_problems(config, args.config))):
         # Fail closed: without a working sandbox the agent would run with the bot's own access
-        sys.exit(f"Refusing to start, the sandbox doesn't work: {', '.join(problems)}. Run 'clangy check'.")
+        print(f"Refusing to start, the sandbox doesn't work: {', '.join(problems)}. Run 'clangy check'.")
+        sys.exit(EX_CONFIG)
 
-    ClangyClient(config).run(os.environ[config.token_env], log_handler=None)
+    token = config.discord_token or os.environ.get("DISCORD_TOKEN", "")
+    if not token:
+        print("No Discord token: set discord_token in the config or DISCORD_TOKEN in the environment.")
+        sys.exit(EX_CONFIG)
+    ClangyClient(config).run(token, log_handler=None)
 
 
 if __name__ == "__main__":

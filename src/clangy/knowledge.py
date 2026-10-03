@@ -47,11 +47,16 @@ def sync(config: Config) -> bool:
     base = config.data_dir / "knowledge"
     mirrors = base / "mirrors"
     mirrors.mkdir(parents=True, exist_ok=True)
+    repos = {game: [s for s in sources if s.url] for game, sources in config.knowledge.items()}
     local: dict[str, Path] = {}
     heads: dict[str, str] = {}
-    for repos in config.knowledge.values():
-        for repo in repos:
-            local[repo.url], heads[repo.url] = _mirror(repo.url, mirrors)
+    for sources in repos.values():
+        for source in sources:
+            assert source.url is not None
+            local[source.url], heads[source.url] = _mirror(source.url, mirrors)
+    if not heads:
+        log.info("No knowledge repositories to sync, all sources are folders used in place")
+        return False
 
     current = base / "current"
     state_file = current / "state.json"
@@ -61,9 +66,10 @@ def sync(config: Config) -> bool:
 
     releases = base / "releases"
     release = releases / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
-    for game, repos in config.knowledge.items():
-        for repo in repos:
-            _export(local[repo.url], release / game / repo.mount)
+    for game, sources in repos.items():
+        for source in sources:
+            assert source.url is not None
+            _export(local[source.url], release / game / source.link)
     (release / "state.json").write_text(json.dumps(heads, indent=2))
 
     link = base / "current.tmp"

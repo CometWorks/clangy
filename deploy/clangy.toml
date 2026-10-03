@@ -1,0 +1,55 @@
+# Config of the nas deployment, lives at /home/clangy/clangy.toml (mode 600, it holds the token).
+# deploy.sh never overwrites it.
+data_dir = "/home/clangy/data"
+discord_token = ""
+
+[sandbox]
+firejail = true
+pi_command = ["/home/clangy/.pi/agent/bin/pi"]
+# pi's launcher looks for its Node.js under $HOME, which is the work folder in the sandbox
+path = "/home/clangy/.pi/agent/bin:/home/clangy/.local/share/pi-node/current/bin:/usr/bin:/bin"
+# Not all of ~/.pi/agent: auth.json and the user's own sessions stay hidden
+read_only = ["/home/clangy/.pi/agent/bin", "/home/clangy/.pi/agent/install", "/home/clangy/.local/share/pi-node"]
+
+[[backends]]
+name = "polaris"
+url = "http://polaris:8080/v1"
+model = "qwen3.8-27b"
+kind = "llamacpp"
+parallel = 1
+context_window = 184320
+max_tokens = 4096
+thinking = "off"
+compat = { thinkingFormat = "qwen-chat-template" }
+prompt_tps = 350.0
+gen_tps = 50.0
+
+# Add the test server's channels here, see docs/configuration.md
+# [[channels]]
+# id = 0
+# mode = "support"
+# initial_response = true
+
+[[knowledge.se1]]
+link = "knowledge/skills"
+path = "/home/clangy/skills/skills"
+
+[[knowledge.se1]]
+link = "knowledge/books"
+path = "/home/clangy/se-dev-books/skills"
+
+[[knowledge.se1]]
+link = ".se-dev"
+path = "/home/clangy/.se-dev"
+
+[[knowledge.se2]]
+link = "knowledge/skills"
+path = "/home/clangy/skills2/skills"
+
+[[knowledge.se2]]
+link = "knowledge/books"
+path = "/home/clangy/se2-dev-books/skills"
+
+[[knowledge.se2]]
+link = ".se2-dev"
+path = "/home/clangy/.se2-dev"

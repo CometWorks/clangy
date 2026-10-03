@@ -1,7 +1,7 @@
 import subprocess
 from pathlib import Path
 
-from clangy.config import BackendConfig, Config, KnowledgeRepo
+from clangy.config import BackendConfig, Config, KnowledgeSource
 from clangy.knowledge import sync
 
 
@@ -29,25 +29,39 @@ def test_sync_swaps_in_new_tree_only_on_change(tmp_path):
         data_dir=tmp_path / "data",
         backends=[BackendConfig(name="b", url="http://x/v1", model="m")],
         knowledge={
-            "se1": [KnowledgeRepo(url=str(skills), mount="skills"), KnowledgeRepo(url=str(books), mount="books")]
+            "se1": [
+                KnowledgeSource(url=str(skills), link="knowledge/skills"),
+                KnowledgeSource(url=str(books), link="knowledge/books"),
+                KnowledgeSource(path=tmp_path, link=".se-dev"),
+            ]
         },
     )
     current = config.data_dir / "knowledge" / "current"
     assert sync(config)
     first = current.resolve()
-    assert (current / "se1" / "skills" / "SKILL.md").read_text() == "v1"
-    assert (current / "se1" / "books" / "BOOK.md").read_text() == "v1"
-    assert not (current / "se1" / "skills" / ".git").exists()
+    assert (current / "se1" / "knowledge" / "skills" / "SKILL.md").read_text() == "v1"
+    assert (current / "se1" / "knowledge" / "books" / "BOOK.md").read_text() == "v1"
+    assert not (current / "se1" / "knowledge" / "skills" / ".git").exists()
+    assert not (current / "se1" / ".se-dev").exists(), "folders used in place aren't copied"
 
     assert not sync(config)
     assert current.resolve() == first
 
     commit(books, "BOOK.md", "v2")
     assert sync(config)
-    assert (current / "se1" / "books" / "BOOK.md").read_text() == "v2"
-    assert (first / "se1" / "books" / "BOOK.md").read_text() == "v1", "the previous tree stays for running sandboxes"
+    assert (current / "se1" / "knowledge" / "books" / "BOOK.md").read_text() == "v2"
+    assert (first / "se1" / "knowledge" / "books" / "BOOK.md").read_text() == "v1", "the previous tree stays"
 
     commit(books, "BOOK.md", "v3")
     assert sync(config)
     assert not first.exists()
     assert len(list((config.data_dir / "knowledge" / "releases").iterdir())) == 2
+
+
+def test_nothing_to_sync_without_repositories(tmp_path):
+    config = Config(
+        data_dir=tmp_path,
+        backends=[BackendConfig(name="b", url="http://x/v1", model="m")],
+        knowledge={"se1": [KnowledgeSource(path=tmp_path, link="knowledge/skills")]},
+    )
+    assert not sync(config)

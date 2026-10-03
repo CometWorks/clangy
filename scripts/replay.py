@@ -17,7 +17,7 @@ import aiohttp
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from clangy.config import BackendConfig, ChannelConfig, Config, KnowledgeRepo, SandboxConfig  # noqa: E402
+from clangy.config import BackendConfig, ChannelConfig, Config, KnowledgeSource, SandboxConfig  # noqa: E402
 from clangy.core import Attachment, Clangy, IncomingMessage  # noqa: E402
 from clangy.knowledge import sync  # noqa: E402
 from clangy.timings import load, summarize  # noqa: E402
@@ -76,7 +76,8 @@ async def main() -> None:
     parser.add_argument("--info-log", type=Path, help="an info.log to attach in the last turn")
     args = parser.parse_args()
 
-    repos = [KnowledgeRepo(url=str(p), mount=m) for p, m in ((args.skills, "skills"), (args.books, "books")) if p]
+    sources = [(args.skills, "knowledge/skills"), (args.books, "knowledge/books")]
+    repos = [KnowledgeSource(url=str(path), link=link) for path, link in sources if path]
     config = Config(
         data_dir=args.data,
         backends=[

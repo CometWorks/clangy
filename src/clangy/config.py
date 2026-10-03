@@ -1,8 +1,8 @@
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 Game = Literal["se1", "se2"]
 ChannelMode = Literal["support", "record", "mention"]
@@ -45,17 +45,31 @@ class SandboxConfig(BaseModel):
     """PATH inside the sandbox, must reach node, pi and python3."""
     read_only: list[str] = Field(default_factory=list)
     """Extra host paths the sandbox may read, e.g. the node installation."""
-    memory_limit: int = 4 * 1024**3
 
 
-class KnowledgeRepo(BaseModel):
-    url: str
-    mount: Literal["skills", "books"]
+class KnowledgeSource(BaseModel):
+    link: str
+    """Where it appears in the work folder: knowledge/skills, knowledge/books, or e.g. .se-dev for data the
+    skills expect in the home folder."""
+    url: str | None = None
+    """Git repository, mirrored by `clangy sync-knowledge`."""
+    path: Path | None = None
+    """Folder used in place."""
+
+    @model_validator(mode="after")
+    def _check(self) -> "KnowledgeSource":
+        if (self.url is None) == (self.path is None):
+            raise ValueError("a knowledge source needs either url or path")
+        link = PurePosixPath(self.link)
+        if link.is_absolute() or ".." in link.parts or not link.parts:
+            raise ValueError(f"link must be a relative path inside the work folder: {self.link}")
+        return self
 
 
 class Config(BaseModel):
     data_dir: Path
-    token_env: str = "DISCORD_TOKEN"
+    discord_token: str = ""
+    """Bot token; falls back to the DISCORD_TOKEN environment variable. Keep the file readable only by the bot."""
     backends: list[BackendConfig]
     channels: list[ChannelConfig] = Field(default_factory=list)
     run_deadline: float = 600.0
@@ -67,7 +81,7 @@ class Config(BaseModel):
     max_retries: int = 3
     secret_markers: list[str] = Field(default_factory=lambda: ["se-dev-books", "se2-dev-books", "knowledge/books"])
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
-    knowledge: dict[Game, list[KnowledgeRepo]] = Field(default_factory=dict)
+    knowledge: dict[Game, list[KnowledgeSource]] = Field(default_factory=dict)
 
     def channel(self, channel_id: int) -> ChannelConfig | None:
         return next((c for c in self.channels if c.id == channel_id), None)

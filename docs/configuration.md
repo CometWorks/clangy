@@ -7,7 +7,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | Key | Default | Meaning |
 |---|---|---|
 | `data_dir` | required | Conversations, store and knowledge live here. |
-| `token_env` | `DISCORD_TOKEN` | Environment variable holding the bot token. |
+| `discord_token` | `""` | Bot token. Falls back to the `DISCORD_TOKEN` environment variable. Keep the config readable only by the bot's user. |
 | `run_deadline` | `600` | Hard limit of a run after it leaves the queue. |
 | `attachment_max_bytes` | 25 MiB | Larger attachments aren't downloaded; the agent gets a note instead. |
 | `answer_max_bytes` | 10 MiB | Total size of the files attached to one answer. Keep it within the server's upload limit. Each file is limited to 5 MB regardless. |
@@ -24,7 +24,6 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `pi_command` | `["pi"]` | Command that starts pi. |
 | `path` | `/usr/local/bin:/usr/bin:/bin` | `PATH` inside the sandbox. Must reach `node`, `pi` and `python3`. |
 | `read_only` | `[]` | Extra host paths the sandbox may read, typically the node installation that holds pi. |
-| `memory_limit` | 4 GiB | Address space limit (`--rlimit-as`). |
 
 ## `[[backends]]`
 
@@ -56,4 +55,12 @@ Clangy acts only in listed channels. The Discord permission overwrites must matc
 
 ## `[[knowledge.se1]]`, `[[knowledge.se2]]`
 
-Repositories for `clangy sync-knowledge`. `mount` is `skills` or `books`, which becomes `knowledge/skills` or `knowledge/books` in the sandbox. The host needs read access, for example SSH keys or a credential helper for the private book repositories.
+Knowledge mounted for conversations about that game. Each source is a link in the conversation's work folder:
+
+| Key | Meaning |
+|---|---|
+| `link` | Relative path in the work folder: `knowledge/skills`, `knowledge/books` (the prompt refers to these), or e.g. `.se-dev` for prepared data the skills expect in the home folder, which is the work folder in the sandbox. |
+| `path` | A folder used in place, read-only. |
+| `url` | A git repository mirrored by `clangy sync-knowledge`. The host needs read access, for example SSH keys for the private book repositories. |
+
+Each source has either `path` or `url`.

@@ -4,8 +4,8 @@ Skipped where pi isn't installed, e.g. in CI.
 """
 
 import json
+import os
 import shutil
-from pathlib import Path
 
 import pytest
 
@@ -25,7 +25,7 @@ async def test_pi_run_with_host_tool_and_stable_prefix(tmp_path, backend, chat):
         data_dir=tmp_path,
         backends=[BackendConfig(name="local", url=backend.url, model="m")],
         channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True)],
-        sandbox=SandboxConfig(firejail=False, path=f"{Path(PI).parent}:/usr/bin:/bin"),
+        sandbox=SandboxConfig(firejail=False, path=os.environ["PATH"]),
         run_deadline=60,
     )
     bot = Clangy(config, chat)

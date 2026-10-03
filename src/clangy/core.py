@@ -379,7 +379,7 @@ class Clangy:
         stats = RunStats()
         tools: list[str] = []
         for _ in range(2):
-            paths = self._prepare_work_dir(conv)
+            paths, read_only = self._prepare_work_dir(conv)
             port = free_port()
             write_pi_config(paths, backend.config, port)
             slot = await backend.take_slot(self.http, conv.key, time.monotonic())
@@ -390,7 +390,7 @@ class Clangy:
                 backend=backend.config,
                 sandbox=self.config.sandbox,
                 prompt=prompt,
-                read_only=self._read_only_paths(paths),
+                read_only=read_only,
             )
             remaining = max(1.0, (progress.deadline or 0) - time.time())
 
@@ -430,39 +430,40 @@ class Clangy:
     def _work_dir(self, conv: Conversation) -> Path:
         return self.conversation_dir(conv.thread_id) / "work"
 
-    def knowledge_path(self, game: Game) -> Path | None:
-        path = self.config.data_dir / "knowledge" / "current" / game
-        return path.resolve() if path.exists() else None
+    def knowledge_links(self, game: Game | None) -> dict[str, Path | None]:
+        """Work folder links of the game's knowledge; the other game's links map to None, to be removed."""
+        links: dict[str, Path | None] = {s.link: None for sources in self.config.knowledge.values() for s in sources}
+        for source in self.config.knowledge.get(game, []) if game else []:
+            target = source.path or self.config.data_dir / "knowledge" / "current" / game / source.link
+            # Resolved per run, so a run keeps one snapshot even if the daily sync swaps the tree
+            links[source.link] = target.resolve() if target.exists() else None
+        return links
 
-    def _prepare_work_dir(self, conv: Conversation) -> RunPaths:
+    def _prepare_work_dir(self, conv: Conversation) -> tuple[RunPaths, list[Path]]:
+        """Refreshes the work folder's links and system prompt; returns the paths the sandbox may read."""
         paths = RunPaths(self._work_dir(conv))
         paths.pi_dir.mkdir(parents=True, exist_ok=True)
         received = self.files_dir(conv.thread_id) / "received"
         received.mkdir(parents=True, exist_ok=True)
-        knowledge = self.knowledge_path(conv.game) if conv.game else None
-        # The links are refreshed per run, so a run sees one knowledge snapshot even if the daily sync swaps it
         links = {
             "attachments": received.resolve(),
             "store": self.store.root.resolve(),
             "guide": GUIDE_DIR,
-            "knowledge": knowledge,
+            **self.knowledge_links(conv.game),
         }
         for name, target in links.items():
             link = paths.work / name
             if link.is_symlink():
                 link.unlink()
             if target is not None:
+                link.parent.mkdir(parents=True, exist_ok=True)
                 link.symlink_to(target, target_is_directory=True)
         channel = self.config.channel(conv.channel_id)
         system = SYSTEM_PROMPT.read_text()
         if channel is not None and channel.prompt:
             system += f"\n# Channel\n{channel.prompt.strip()}\n"
         paths.system_prompt.write_text(system)
-        return paths
-
-    def _read_only_paths(self, paths: RunPaths) -> list[Path]:
-        names = ("attachments", "store", "guide", "knowledge")
-        return [(paths.work / n).resolve() for n in names if (paths.work / n).is_symlink()]
+        return paths, [target for target in links.values() if target is not None]
 
     def _snapshot_session(self, conv: Conversation) -> None:
         session = RunPaths(self._work_dir(conv)).session

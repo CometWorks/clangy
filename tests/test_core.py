@@ -7,7 +7,7 @@ import aiohttp
 import pytest
 
 from clangy import text
-from clangy.config import BackendConfig, ChannelConfig, Config
+from clangy.config import BackendConfig, ChannelConfig, Config, KnowledgeSource
 from clangy.core import Attachment, Clangy, IncomingMessage
 from clangy.proxy import short_path
 from clangy.runner import RunResult, RunSpec
@@ -302,20 +302,49 @@ async def test_monitor_skips_unhealthy_backend(bot, backend):
 
 
 async def test_set_game_mounts_knowledge_and_continues(bot, chat, config):
-    knowledge = config.data_dir / "knowledge" / "releases" / "r1" / "se2" / "skills"
+    knowledge = config.data_dir / "knowledge" / "releases" / "r1" / "se2" / "knowledge" / "skills"
     knowledge.mkdir(parents=True)
     (config.data_dir / "knowledge" / "current").symlink_to("releases/r1")
+    config.knowledge["se2"] = [KnowledgeSource(url="https://example.invalid/skills2.git", link="knowledge/skills")]
     bot.agent.script = [tool("set_game", {"game": "se2"}, answer("")), answer("SE2 answer")]
     await bot.on_message(forum_post(SUPPORT, 1012, "SE2 crashes on start"))
     await bot.wait_idle()
     first, second = bot.agent.specs
-    assert knowledge.parent.resolve() not in first.read_only
+    assert knowledge.resolve() not in first.read_only
     assert second.prompt.startswith("[host] This conversation is about SE2. Its knowledge is under knowledge/.")
     assert (second.paths.work / "knowledge" / "skills").is_dir()
-    assert knowledge.parent.resolve() in second.read_only
+    assert knowledge.resolve() in second.read_only
     conv = bot.conversations[1012]
     assert conv.game == "se2" and conv.host_notes == [] and conv.pending == []
     assert chat.in_channel(1012)[0].current.startswith("SE2 answer")
+
+
+async def test_knowledge_folders_in_place_only_for_the_game(bot, config, tmp_path):
+    folders = {name: tmp_path / "srv" / name for name in ("skills", "skills2", "se-dev", "books")}
+    for folder in folders.values():
+        folder.mkdir(parents=True)
+    config.knowledge["se1"] = [
+        KnowledgeSource(path=folders["skills"], link="knowledge/skills"),
+        KnowledgeSource(path=folders["books"], link="knowledge/books"),
+        KnowledgeSource(path=folders["se-dev"], link=".se-dev"),
+    ]
+    config.knowledge["se2"] = [KnowledgeSource(path=folders["skills2"], link="knowledge/skills")]
+    await bot.on_message(forum_post(SE1_FORUM, 1024, "Help"))
+    await bot.wait_idle()
+    spec = bot.agent.specs[0]
+    work = spec.paths.work
+    assert (work / "knowledge" / "skills").resolve() == folders["skills"]
+    assert (work / ".se-dev").resolve() == folders["se-dev"]
+    assert {folders["skills"], folders["books"], folders["se-dev"]} <= set(spec.read_only)
+    assert folders["skills2"] not in spec.read_only
+
+    # Switching the game swaps the links and drops the other game's extras
+    bot.agent.script = [tool("set_game", {"game": "se2"}, answer("")), answer("SE2 then.")]
+    await bot.on_message(message(1024, "@Clangy actually SE2", parent_id=SE1_FORUM, mentions_bot=True))
+    await bot.wait_idle()
+    assert (work / "knowledge" / "skills").resolve() == folders["skills2"]
+    assert not (work / ".se-dev").exists() and not (work / "knowledge" / "books").exists()
+    assert folders["se-dev"] not in bot.agent.specs[-1].read_only
 
 
 async def test_channel_game_and_prompt(bot, config):
