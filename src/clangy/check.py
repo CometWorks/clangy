@@ -61,7 +61,7 @@ class ConsoleChat:
     async def create_thread(self, channel_id: int, message_id: int, name: str) -> int:
         return message_id
 
-    async def history(self, channel_id: int, before_id: int, limit: int, after: datetime) -> list:
+    async def history(self, channel_id: int, before_id: int | None, limit: int, after: datetime) -> list:
         return []
 
     async def download(self, attachment, path: Path) -> None:

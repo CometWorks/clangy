@@ -7,7 +7,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-from clangy.core import Attachment
+from clangy.core import Attachment, HistoryUnavailable
 
 
 def sse(payload: dict) -> bytes:
@@ -125,6 +125,7 @@ class FakeChat:
         self.files: dict[str, bytes] = {}
         self.channel_history: dict[int, list] = {}
         self.history_calls: list[tuple] = []
+        self.unreadable: set[int] = set()
         self._next_id = 9000
 
     def in_channel(self, channel_id: int) -> list[Sent]:
@@ -148,9 +149,14 @@ class FakeChat:
 
     async def history(self, channel_id: int, before_id: int, limit: int, after) -> list:
         self.history_calls.append((channel_id, before_id, limit, after))
-        return self.channel_history.get(channel_id, [])[-limit:]
+        if channel_id in self.unreadable:
+            raise HistoryUnavailable(f"no access to {channel_id}")
+        messages = [m for m in self.channel_history.get(channel_id, []) if before_id is None or m.id < before_id]
+        return messages[-limit:]
 
     async def download(self, attachment: Attachment, path: Path) -> None:
+        if attachment.url not in self.files:
+            raise ValueError("404")
         path.write_bytes(self.files[attachment.url])
 
 

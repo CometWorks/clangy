@@ -8,7 +8,7 @@ import aiohttp
 import discord
 
 from clangy.config import Config
-from clangy.core import Attachment, Clangy, IncomingMessage
+from clangy.core import Attachment, Clangy, HistoryUnavailable, IncomingMessage
 
 log = logging.getLogger(__name__)
 
@@ -52,16 +52,17 @@ class DiscordChat:
         thread = await channel.get_partial_message(message_id).create_thread(name=name[:100])
         return thread.id
 
-    async def history(self, channel_id: int, before_id: int, limit: int, after: datetime) -> list[IncomingMessage]:
+    async def history(
+        self, channel_id: int, before_id: int | None, limit: int, after: datetime
+    ) -> list[IncomingMessage]:
         channel = await self._channel(channel_id)
         assert self.client.user is not None
-        newest_first = channel.history(limit=limit, before=discord.Object(before_id), after=after, oldest_first=False)
+        before = discord.Object(before_id) if before_id else None
+        newest_first = channel.history(limit=limit, before=before, after=after, oldest_first=False)
         try:
             return [incoming(m, self.client.user) async for m in newest_first][::-1]
         except discord.HTTPException as e:
-            # Missing Read Message History must not cost the answer, only its context
-            log.warning("Can't read the history of channel %s: %s", channel_id, e)
-            return []
+            raise HistoryUnavailable(f"can't read the history of channel {channel_id}: {e}") from e
 
     async def download(self, attachment: Attachment, path: Path) -> None:
         size = 0
@@ -111,6 +112,9 @@ class ClangyClient(discord.Client):
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s", self.user)
+        assert self.core is not None
+        # Also after reconnects, which can lose gateway events
+        await self.core.catch_up()
 
     async def on_message(self, message: discord.Message) -> None:
         assert self.core is not None and self.user is not None

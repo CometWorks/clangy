@@ -1,7 +1,7 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import aiohttp
 import pytest
@@ -148,8 +148,8 @@ async def test_quiet_forum_waits_for_mention_and_sends_everything(bot, chat):
     assert prompt.index("Alice: First post") < prompt.index("Bob: Me too") < prompt.index("Alice: @Clangy help?")
 
 
-async def test_ignores_unknown_threads_and_unconfigured_channels(bot, chat):
-    await bot.on_message(message(1002, "@Clangy hi", parent_id=QUIET_FORUM, mentions_bot=True))
+async def test_ignores_unconfigured_channels(bot, chat):
+    await bot.on_message(message(1002, "@Clangy hi", parent_id=999, mentions_bot=True))
     await bot.on_message(message(999, "@Clangy hi", mentions_bot=True))
     await bot.on_message(message(MENTION, "no mention here"))
     await bot.wait_idle()
@@ -632,8 +632,8 @@ async def test_mention_brings_the_recent_channel_chat_along(bot, chat):
     await bot.on_message(message(MENTION, "@Clangy Do we have this animal in SE1?", id=605, mentions_bot=True))
     await bot.wait_idle()
     [(channel_id, before_id, limit, after)] = chat.history_calls
-    assert (channel_id, before_id, limit) == (MENTION, 605, 20)
-    assert after == datetime(2026, 10, 3, 11, 0, tzinfo=timezone.utc)
+    assert (channel_id, before_id, limit) == (MENTION, 605, 100)
+    assert after == datetime(2026, 10, 3, 0, 0, tzinfo=timezone.utc), "since midnight"
     prompt = bot.agent.prompts[0]
     lines = [line for line in prompt.splitlines() if not line.startswith("[host] 20")]
     assert lines == [
@@ -645,3 +645,67 @@ async def test_mention_brings_the_recent_channel_chat_along(bot, chat):
     ]
     bot.on_edit(message(MENTION, "Big", id=601))
     assert "it now reads: Big" in bot.conversations[605].host_notes[-1], "context messages are tracked for edits"
+
+
+async def test_context_reaches_back_four_hours_around_midnight(bot, chat):
+    late = message(MENTION, "@Clangy hi", id=606, mentions_bot=True)
+    late.created = datetime(2026, 10, 4, 1, 30, tzinfo=timezone.utc)
+    await bot.on_message(late)
+    await bot.wait_idle()
+    assert chat.history_calls[0][3] == datetime(2026, 10, 3, 21, 30, tzinfo=timezone.utc)
+
+
+async def test_mention_in_an_unknown_thread_starts_with_its_history(bot, chat):
+    chat.channel_history[1040] = [
+        message(1040, "Old forum post", parent_id=QUIET_FORUM, id=1040, author="Carol"),
+        message(1040, "v1 answer", parent_id=QUIET_FORUM, id=1041, from_self=True),
+        message(1040, "Still broken", parent_id=QUIET_FORUM, id=1042, author="Carol"),
+    ]
+    await bot.on_message(message(1040, "@Clangy any idea?", parent_id=QUIET_FORUM, id=1043, mentions_bot=True))
+    await bot.wait_idle()
+    assert chat.history_calls[0][:2] == (1040, 1043)
+    prompt = bot.agent.prompts[0]
+    assert prompt.index("Carol: Old forum post") < prompt.index("Carol: Still broken") < prompt.index("any idea?")
+    assert "v1 answer" not in prompt
+    assert chat.in_channel(1040)[0].current.startswith("Default answer.")
+
+
+async def test_unknown_threads_without_mention_stay_ignored(bot, chat):
+    await bot.on_message(message(1050, "just chatting", parent_id=QUIET_FORUM, id=1051))
+    assert bot.conversations == {} and chat.history_calls == []
+
+
+async def test_no_answer_without_context(bot, chat):
+    chat.unreadable.add(MENTION)
+    await bot.on_message(message(MENTION, "@Clangy what about this?", id=607, mentions_bot=True))
+    await bot.wait_idle()
+    assert bot.conversations == {} and chat.threads == [] and chat.messages == {}
+
+
+async def test_context_comes_from_the_cache_after_catching_up(bot, chat):
+    now = datetime.now(timezone.utc)
+
+    def recent(text: str, message_id: int, minutes_ago: int, **kwargs) -> IncomingMessage:
+        m = message(MENTION, text, id=message_id, **kwargs)
+        m.created = now - timedelta(minutes=minutes_ago)
+        return m
+
+    chat.channel_history[MENTION] = [recent("before the restart", 701, 30), recent("bot", 702, 29, from_self=True)]
+    await bot.catch_up()
+    assert len(chat.history_calls) == 1 and chat.history_calls[0][1] is None
+    await bot.on_message(recent("Little", 703, 3))
+    await bot.on_message(recent("brown", 704, 2))
+    await bot.on_message(recent("typo", 705, 1))
+    bot.on_edit(recent("Little!", 703, 3))
+    bot.on_delete(705)
+    await bot.on_message(recent("@Clangy what is it?", 706, 0, mentions_bot=True))
+    await bot.wait_idle()
+    assert len(chat.history_calls) == 1, "no Discord request at mention time"
+    lines = [line for line in bot.agent.prompts[0].splitlines() if not line.startswith("[host]")]
+    assert lines == ["Alice: before the restart", "Alice: Little!", "Alice: brown", "Alice: @Clangy what is it?"]
+
+
+async def test_dead_attachment_links_become_a_note(bot, chat):
+    dead = Attachment(3, "old.png", 10, "https://cdn/expired")
+    await bot.on_message(forum_post(QUIET_FORUM, 1060, "Picture", attachments=[dead]))
+    assert bot.conversations[1060].pending[0].attachments == ["old.png could not be downloaded"]

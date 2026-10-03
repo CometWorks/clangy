@@ -17,8 +17,10 @@ from pydantic import BaseModel, Field
 
 from clangy import text
 from clangy.backend import Backend
+from clangy.cache import MessageCache
 from clangy.config import ChannelConfig, Config, Game, SandboxConfig
 from clangy.files import FileError, Outbox, safe_filename
+from clangy.messages import Attachment, IncomingMessage
 from clangy.proxy import HostServer, ProxyRun, RunStats, TcpRelay, ToolError
 from clangy.runner import PACKAGE_DIR, RunPaths, RunResult, RunSpec, free_port, run_pi, write_pi_config
 from clangy.store import Store, StoreError
@@ -32,32 +34,8 @@ FIRST_RUN_TOKENS = 3000
 """System prompt and tool definitions, processed only on the first run of a conversation."""
 
 
-@dataclass
-class Attachment:
-    id: int
-    filename: str
-    size: int
-    url: str
-
-
-@dataclass
-class IncomingMessage:
-    id: int
-    channel_id: int
-    """The thread for messages in threads, otherwise the channel."""
-    parent_id: int | None
-    """Parent channel of the thread, None outside threads."""
-    guild_id: int
-    author: str
-    text: str
-    """Message text with mentions resolved to names."""
-    created: datetime
-    mentions_bot: bool = False
-    from_self: bool = False
-    starts_thread: bool = False
-    """First message of a forum post."""
-    thread_name: str = ""
-    attachments: list[Attachment] = field(default_factory=list)
+class HistoryUnavailable(RuntimeError):
+    """The chat before a mention can't be read, so there's no context to answer from."""
 
 
 class Chat(Protocol):
@@ -69,8 +47,10 @@ class Chat(Protocol):
 
     async def create_thread(self, channel_id: int, message_id: int, name: str) -> int: ...
 
-    async def history(self, channel_id: int, before_id: int, limit: int, after: datetime) -> list[IncomingMessage]:
-        """Channel messages before a message, oldest first."""
+    async def history(
+        self, channel_id: int, before_id: int | None, limit: int, after: datetime
+    ) -> list[IncomingMessage]:
+        """Channel messages after a time and before a message (or now), oldest first. Raises HistoryUnavailable."""
         ...
 
     async def download(self, attachment: Attachment, path: Path) -> None: ...
@@ -161,6 +141,11 @@ class Clangy:
         self.conversations: dict[int, Conversation] = {}
         self._workers: dict[int, asyncio.Task] = {}
         self._outboxes: dict[int, Outbox] = {}
+        self.cache = MessageCache(config.data_dir / "messages.sqlite")
+        self._live_since = datetime.now(timezone.utc)
+        """Since when the cache has every message of Clangy's channels and their threads."""
+        self._covered_since: dict[int, datetime] = {}
+        """Channels and threads whose cache reaches further back, from catching up or fetching."""
         self._message_threads: dict[int, int] = {}
         """Message id to conversation, for edits and deletions."""
         self._in_run: dict[int, set[int]] = {}
@@ -187,6 +172,7 @@ class Clangy:
             task.cancel()
         if self._http is not None:
             await self._http.close()
+        self.cache.close()
 
     # Persistence
 
@@ -225,10 +211,16 @@ class Clangy:
     async def on_message(self, msg: IncomingMessage) -> None:
         if msg.from_self:
             return
+        if self._watched(msg):
+            self.cache.add(msg)
         conv = self.conversations.get(msg.channel_id)
         new = conv is None
         if conv is None:
-            conv = await self._start_conversation(msg)
+            try:
+                conv = await self._start_conversation(msg)
+            except HistoryUnavailable as e:
+                log.error("Not answering message %s without its context: %s", msg.id, e)
+                return
         channel = self.config.channel(conv.channel_id) if conv else None
         if conv is None or channel is None:
             return
@@ -245,22 +237,64 @@ class Clangy:
         """Starts a conversation for new forum posts and for mentions in mention-mode channels."""
         if msg.parent_id is not None:
             channel = self.config.channel(msg.parent_id)
-            if channel is None or channel.mode == "mention" or not msg.starts_thread:
+            if channel is None:
                 return None
-            return self._new_conversation(msg.channel_id, channel, msg.guild_id)
-        channel = self.config.channel(msg.channel_id)
-        if channel is None or channel.mode != "mention" or not msg.mentions_bot:
-            return None
-        # The chat right before the mention is its context, e.g. a screenshot posted just before
-        after = msg.created - timedelta(seconds=channel.history_age)
-        earlier = await self.chat.history(msg.channel_id, msg.id, channel.history_messages, after)
-        name = " ".join(msg.text.split())[:90] or f"Question from {msg.author}"
-        thread_id = await self.chat.create_thread(msg.channel_id, msg.id, name)
-        conv = self._new_conversation(thread_id, channel, msg.guild_id)
+            if msg.starts_thread and channel.mode != "mention":
+                return self._new_conversation(msg.channel_id, channel, msg.guild_id)
+            if not msg.mentions_bot:
+                return None
+            # A mention in a thread Clangy doesn't know yet, e.g. one started before it ran
+            earlier = await self._history(channel, msg)
+            conv = self._new_conversation(msg.channel_id, channel, msg.guild_id)
+        else:
+            channel = self.config.channel(msg.channel_id)
+            if channel is None or channel.mode != "mention" or not msg.mentions_bot:
+                return None
+            earlier = await self._history(channel, msg)
+            name = " ".join(msg.text.split())[:90] or f"Question from {msg.author}"
+            thread_id = await self.chat.create_thread(msg.channel_id, msg.id, name)
+            conv = self._new_conversation(thread_id, channel, msg.guild_id)
         for message in earlier:
             if not message.from_self:
                 await self._add_message(conv, channel, message)
         return conv
+
+    def _watched(self, msg: IncomingMessage) -> bool:
+        """Whether the message is in one of Clangy's channels or their threads."""
+        return any(c is not None and self.config.channel(c) for c in (msg.channel_id, msg.parent_id))
+
+    @staticmethod
+    def context_start(channel: ChannelConfig, now: datetime) -> datetime:
+        """A mention's context reaches back to midnight UTC, but at least history_hours."""
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        return min(midnight, now - timedelta(hours=channel.history_hours))
+
+    async def _history(self, channel: ChannelConfig, msg: IncomingMessage) -> list[IncomingMessage]:
+        """The chat before a mention, from the cache; Discord fills in what the cache doesn't cover yet."""
+        start = self.context_start(channel, msg.created)
+        if start < self._covered_since.get(msg.channel_id, self._live_since):
+            await self._fetch_history(msg.channel_id, msg.id, channel.history_messages, start)
+        return self.cache.before(msg.channel_id, msg.id, start, channel.history_messages)
+
+    async def _fetch_history(self, channel_id: int, before_id: int | None, limit: int, start: datetime) -> None:
+        for message in await self.chat.history(channel_id, before_id, limit, start):
+            if not message.from_self:
+                self.cache.add(message)
+        self._covered_since[channel_id] = start
+
+    async def catch_up(self) -> None:
+        """Fills the mention channels' context windows after a (re)connect; Discord may have dropped events."""
+        now = datetime.now(timezone.utc)
+        self._live_since = now
+        self._covered_since.clear()
+        self.cache.prune(now - timedelta(days=2))
+        for channel in self.config.channels:
+            if channel.mode != "mention":
+                continue
+            try:
+                await self._fetch_history(channel.id, None, channel.history_messages, self.context_start(channel, now))
+            except HistoryUnavailable as e:
+                log.warning("Couldn't catch up on channel %s: %s", channel.id, e)
 
     async def _add_message(self, conv: Conversation, channel: ChannelConfig, msg: IncomingMessage) -> None:
         """Queues a message for the next run and remembers it for edits and deletions."""
@@ -296,11 +330,13 @@ class Clangy:
         return next((m for m in conv.pending if m.id == message_id), None)
 
     def knows(self, message_id: int) -> bool:
-        """Whether the message belongs to one of Clangy's conversations."""
-        return message_id in self._message_threads
+        """Whether the message is cached or belongs to one of Clangy's conversations."""
+        return message_id in self._message_threads or self.cache.has(message_id)
 
     def on_edit(self, msg: IncomingMessage) -> None:
         """Applies an edit to the next run; a running answer keeps working from the old text."""
+        if not msg.from_self:
+            self.cache.edit(msg.id, msg.text)
         conv = self.conversations.get(self._message_threads.get(msg.id, 0))
         known = conv.known.get(msg.id) if conv else None
         if conv is None or known is None or msg.from_self or known.text == msg.text:
@@ -317,6 +353,7 @@ class Clangy:
 
     def on_delete(self, message_id: int) -> None:
         """Applies a deletion to the next run; a running answer keeps working from the old text."""
+        self.cache.delete(message_id)
         conv = self.conversations.get(self._message_threads.pop(message_id, 0))
         known = conv.known.pop(message_id, None) if conv else None
         if conv is None or known is None:
@@ -360,7 +397,13 @@ class Clangy:
                 notes.append(f"{attachment.filename} ({human_size(attachment.size)}) not saved, over the {limit} limit")
                 continue
             folder.mkdir(parents=True, exist_ok=True)
-            await self.chat.download(attachment, folder / name)
+            try:
+                await self.chat.download(attachment, folder / name)
+            except (aiohttp.ClientError, OSError, ValueError) as e:
+                # Discord's attachment links expire, an older message from the cache may have a dead one
+                log.warning("Download of %s failed: %r", attachment.filename, e)
+                notes.append(f"{attachment.filename} could not be downloaded")
+                continue
             notes.append(f"attachments/{name} ({human_size(attachment.size)})")
         return PendingMessage(id=msg.id, author=msg.author, text=msg.text, created=msg.created, attachments=notes)
 
