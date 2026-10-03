@@ -17,7 +17,12 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 const socketPath = process.env.CLANGY_SOCKET!;
 const systemPrompt = readFileSync(process.env.CLANGY_SYSTEM_PROMPT!, "utf-8");
 
-function callHost(name: string, params: unknown): Promise<string> {
+interface HostReply {
+	text: string;
+	stop: boolean;
+}
+
+function callHost(name: string, params: unknown): Promise<HostReply> {
 	return new Promise((resolve, reject) => {
 		const request = http.request(
 			{ socketPath, path: `/tools/${name}`, method: "POST", headers: { "Content-Type": "application/json" } },
@@ -27,7 +32,7 @@ function callHost(name: string, params: unknown): Promise<string> {
 				response.on("end", () => {
 					const result = JSON.parse(data);
 					if (result.error) reject(new Error(result.error));
-					else resolve(result.text);
+					else resolve(result);
 				});
 			},
 		);
@@ -99,9 +104,11 @@ export default function (pi: ExtensionAPI) {
 		pi.registerTool({
 			...tool,
 			label: tool.name,
-			async execute(_toolCallId, params) {
-				const text = await callHost(tool.name, params);
-				return { content: [{ type: "text", text }], details: {} };
+			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+				const reply = await callHost(tool.name, params);
+				// The host restarts the run, e.g. with the game's knowledge mounted after set_game
+				if (reply.stop) ctx.abort();
+				return { content: [{ type: "text", text: reply.text }], details: {} };
 			},
 		});
 	}

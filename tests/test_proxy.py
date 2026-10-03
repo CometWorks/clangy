@@ -83,14 +83,16 @@ async def test_deep_socket_path(tmp_path):
     async with aiohttp.ClientSession() as http:
         run = ProxyRun(backend=make_backend("http://127.0.0.1:1/v1"), session=http, tools=tools)
         async with HostServer(run, deep):
-            assert await post(deep, "/tools/echo", {"x": 2}) == (200, json.dumps({"text": "echo: 2"}))
+            status, body = await post(deep, "/tools/echo", {"x": 2})
+            assert (status, json.loads(body)) == (200, {"text": "echo: 2", "stop": False})
 
 
 async def test_tools(tmp_path):
     async with aiohttp.ClientSession() as http:
         run = ProxyRun(backend=make_backend("http://127.0.0.1:1/v1"), session=http, tools=tools)
         async with HostServer(run, tmp_path / "host.sock"):
-            assert await post(tmp_path / "host.sock", "/tools/echo", {"x": 1}) == (200, json.dumps({"text": "echo: 1"}))
+            status, body = await post(tmp_path / "host.sock", "/tools/echo", {"x": 1})
+            assert (status, json.loads(body)) == (200, {"text": "echo: 1", "stop": False})
             status, body = await post(tmp_path / "host.sock", "/tools/fail", {})
     assert status == 400 and json.loads(body) == {"error": "nope"}
     assert not (tmp_path / "host.sock").exists()

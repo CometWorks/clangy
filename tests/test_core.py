@@ -388,7 +388,7 @@ async def test_ticket_tools_link_thread_and_attachments(bot, chat, config):
     for prompt in ("@Clangy same", "@Clangy bad"):
         await bot.on_message(message(1015, prompt, parent_id=SE1_FORUM, mentions_bot=True))
         await bot.wait_idle()
-    assert bot.agent.tool_results[1] == (200, {"text": "Added the report to T-0001."})
+    assert bot.agent.tool_results[1] == (200, {"text": "Added the report to T-0001.", "stop": False})
     assert bot.agent.tool_results[2] == (400, {"error": "title is empty"})
 
 

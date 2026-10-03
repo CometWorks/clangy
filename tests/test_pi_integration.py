@@ -10,7 +10,7 @@ import shutil
 import pytest
 
 from clangy import text
-from clangy.config import BackendConfig, ChannelConfig, Config, SandboxConfig
+from clangy.config import BackendConfig, ChannelConfig, Config, KnowledgeSource, SandboxConfig
 from clangy.core import SYSTEM_PROMPT, Clangy
 from tests.fakes import Reply
 from tests.test_core import SUPPORT, forum_post, message
@@ -85,3 +85,25 @@ async def test_pi_commands_reach_the_proxy(tmp_path, backend, chat, squid):
     assert squid.requests == ["pypi.org:443"]
     tool_result = json.dumps(backend.requests[-1]["messages"][-1])
     assert "200 Connection established" in tool_result
+
+
+async def test_set_game_ends_the_run_and_starts_it_again(tmp_path, backend, chat):
+    assert PI is not None
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    config = Config(
+        data_dir=tmp_path / "data",
+        backends=[BackendConfig(name="local", url=backend.url, model="m")],
+        channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True)],
+        sandbox=SandboxConfig(firejail=False, path=os.environ["PATH"]),
+        knowledge={"se1": [KnowledgeSource(path=skills, link="knowledge/skills")]},
+        run_deadline=60,
+    )
+    backend.replies = [Reply(tool="set_game", arguments={"game": "se1"}), Reply("SE1 answer.")]
+    bot = Clangy(config, chat)
+    await bot.on_message(forum_post(SUPPORT, 2002, "My SE1 game crashes"))
+    await bot.wait_idle()
+    await bot.close()
+    assert len(backend.requests) == 2, "no model call between set_game and the new run"
+    assert "This conversation is about SE1" in json.dumps(backend.requests[1]["messages"][-1])
+    assert chat.in_channel(2002)[0].current.startswith("SE1 answer.")

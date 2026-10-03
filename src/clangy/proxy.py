@@ -23,7 +23,15 @@ from clangy.backend import Backend
 
 log = logging.getLogger(__name__)
 
-ToolHandler = Callable[[str, dict], Awaitable[str]]
+
+@dataclass
+class ToolReply:
+    text: str
+    stop: bool = False
+    """Ends the agent's run after this tool call, e.g. to start it again with new mounts."""
+
+
+ToolHandler = Callable[[str, dict], Awaitable[ToolReply | str]]
 MIN_SPEED_SAMPLE = 500
 """Prompt tokens a request must process to count as a speed sample."""
 
@@ -154,10 +162,12 @@ class HostServer:
         name = request.match_info["name"]
         try:
             params = await request.json()
-            text = await self.run.tools(name, params)
+            reply = await self.run.tools(name, params)
         except (ToolError, json.JSONDecodeError) as e:
             return web.json_response({"error": str(e)}, status=400)
-        return web.json_response({"text": text})
+        if isinstance(reply, str):
+            reply = ToolReply(reply)
+        return web.json_response({"text": reply.text, "stop": reply.stop})
 
     async def _chat(self, request: web.Request) -> web.StreamResponse:
         run = self.run

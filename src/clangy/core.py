@@ -21,7 +21,7 @@ from clangy.cache import MessageCache
 from clangy.config import ChannelConfig, Config, Game, SandboxConfig
 from clangy.files import FileError, Outbox, safe_filename
 from clangy.messages import Attachment, IncomingMessage
-from clangy.proxy import HostServer, ProxyRun, RunStats, TcpRelay, ToolError
+from clangy.proxy import HostServer, ProxyRun, RunStats, TcpRelay, ToolError, ToolReply
 from clangy.runner import PACKAGE_DIR, RunPaths, RunResult, RunSpec, free_port, run_pi, write_pi_config
 from clangy.store import Store, StoreError
 
@@ -643,8 +643,8 @@ class Clangy:
 
     # Host tools
 
-    def _tool_handler(self, conv: Conversation) -> Callable[[str, dict], Awaitable[str]]:
-        async def handle(name: str, params: dict) -> str:
+    def _tool_handler(self, conv: Conversation) -> Callable[[str, dict], Awaitable[ToolReply | str]]:
+        async def handle(name: str, params: dict) -> ToolReply | str:
             try:
                 return self._tool(conv, name, params)
             except (StoreError, FileError, KeyError, TypeError) as e:
@@ -652,7 +652,7 @@ class Clangy:
 
         return handle
 
-    def _tool(self, conv: Conversation, name: str, params: dict) -> str:
+    def _tool(self, conv: Conversation, name: str, params: dict) -> ToolReply | str:
         meta = {"thread": conv.url}
         if conv.game:
             meta["game"] = conv.game
@@ -672,7 +672,7 @@ class Clangy:
                 return f"Added the report to {params['id']}."
         raise ToolError(f"unknown tool: {name}")
 
-    def _set_game(self, conv: Conversation, game: str) -> str:
+    def _set_game(self, conv: Conversation, game: str) -> ToolReply | str:
         if game not in ("se1", "se2"):
             raise ToolError("game must be se1 or se2")
         if conv.game == game:
@@ -680,7 +680,8 @@ class Clangy:
         conv.game = game
         conv.host_notes.append(self._knowledge_note(game))
         self.save(conv)
-        return "Recorded. Stop now and write nothing; you will continue right away with the knowledge mounted."
+        # The run ends here and starts again with the knowledge mounted
+        return ToolReply("Recorded. The knowledge is being mounted.", stop=True)
 
     # Output
 
