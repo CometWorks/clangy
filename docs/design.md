@@ -31,10 +31,16 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 ### When Clangy responds
 
 - A new forum post in a `support` or `record` channel starts a conversation. It gets an answer only if `initial_response` is on.
-- In a `mention` channel, a message mentioning Clangy starts a thread from that message. The thread is the conversation, and Clangy never writes in the channel itself. The channel's recent messages before the mention (`history_messages`, `history_age`) go along as context, attachments included, since people often write the question across several messages or post a screenshot first.
+- In a `mention` channel, a message mentioning Clangy starts a thread from that message. The thread is the conversation, and Clangy never writes in the channel itself. The channel's recent messages before the mention go along as context, attachments included, since people often write the question across several messages or post a screenshot first.
 - Inside known conversations, every message is queued, and only mentions trigger a run.
 - With `initial_delay`, the first answer to a new forum thread waits until the thread has been quiet that long; every message, edit or deletion restarts the wait, and nothing is posted meanwhile. A mention cancels the wait and is answered right away. A wait cut short by a restart is dropped.
-- Threads Clangy doesn't know (started while it was down, or by v1) are ignored. Nothing is caught up after a restart.
+- A mention in a thread Clangy doesn't know yet (started before it ran, or by someone else in a text channel) starts a conversation in that thread, with the thread's recent messages as context.
+- Without context Clangy doesn't answer: if the history can't be read, it logs an error and stays silent.
+- Nothing is answered after the fact: messages posted while Clangy was down are context for later mentions, never triggers.
+
+### Context and the message cache
+
+A mention's context reaches back to midnight UTC, but at least `history_hours` (4), and at most `history_messages` (100) messages. Reading that from Discord is slow, so Clangy keeps every message of its channels and their threads in `<data_dir>/messages.sqlite` as it arrives, applies edits and deletions to it, and prunes it after two days. On every gateway (re)connect it catches up the mention channels' context windows from Discord, one request each, since a restart or a dropped session loses events. A mention reads its context from the cache and only asks Discord for what the cache doesn't cover, e.g. an old thread that was quiet while Clangy ran, and caches that too. Attachments of older messages may have expired links; they become a note instead of a file.
 
 ### Edits and deletions
 
@@ -145,6 +151,8 @@ The proxy opens a new connection for every backend request. llama.cpp closes idl
 The host socket is bound through `/proc/self/fd/<dir fd>/host.sock` and pi connects to it relative to its working directory, because unix socket paths are limited to 107 bytes.
 
 ## Persisted state
+
+`<data_dir>/messages.sqlite` caches the messages of Clangy's channels (see Context and the message cache).
 
 `<data_dir>/conversations/<thread id>/`:
 
