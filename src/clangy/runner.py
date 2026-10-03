@@ -69,6 +69,8 @@ class RunResult:
     answer: str | None = None
     error: str | None = None
     timed_out: bool = False
+    tools: list[str] = field(default_factory=list)
+    """Tools called during the run, in order."""
 
 
 def write_pi_config(paths: RunPaths, backend: BackendConfig, port: int) -> None:
@@ -186,6 +188,7 @@ async def run_pi(spec: RunSpec, port: int, deadline: float, on_state: Callable[[
         limit=64 * 1024**2,
     )
     result = RunResult(error="pi exited without an answer")
+    tools: list[str] = []
 
     async def consume() -> None:
         nonlocal result
@@ -197,6 +200,8 @@ async def run_pi(spec: RunSpec, port: int, deadline: float, on_state: Callable[[
                 continue
             if state := event_state(event):
                 on_state(state)
+            if event.get("type") == "tool_execution_start":
+                tools.append(event.get("toolName", ""))
             if event.get("type") == "agent_end":
                 result = final_result(event)
         await process.wait()
@@ -206,7 +211,7 @@ async def run_pi(spec: RunSpec, port: int, deadline: float, on_state: Callable[[
     except TimeoutError:
         os.killpg(process.pid, signal.SIGKILL)
         await process.wait()
-        return RunResult(timed_out=True)
+        return RunResult(timed_out=True, tools=tools)
     finally:
         if process.returncode is None:
             os.killpg(process.pid, signal.SIGKILL)
@@ -215,4 +220,6 @@ async def run_pi(spec: RunSpec, port: int, deadline: float, on_state: Callable[[
         assert process.stderr is not None
         stderr = (await process.stderr.read()).decode(errors="replace")[-2000:]
         log.warning("pi exited with %s: %s", process.returncode, stderr)
+        result.error = f"pi exited with {process.returncode}: {stderr[-500:]}"
+    result.tools = tools
     return result

@@ -63,7 +63,7 @@ A follow-up should cost only its new tokens. What keeps the prefix byte-identica
 
 One known gap: Qwen chat templates drop the reasoning of earlier turns, so after a thinking turn the server re-processes the tokens from the last assistant message on. Everything before that stays cached.
 
-`metrics.jsonl` in each conversation folder records prompt, cached and completion tokens, the time to first token and the total time of every request. Use it to confirm caching on a long thread.
+`metrics.jsonl` (see Metrics) records cached and processed tokens of every request. Use it to confirm caching on a long thread.
 
 ## Progress and ETA
 
@@ -71,7 +71,7 @@ The host edits the progress message in place every `progress_interval` (a minute
 
 ETA = queue position × average run time ÷ `parallel` + max(prompt tokens ÷ prompt speed + 500 ÷ generation speed, average run time). Runs with tool calls take many model turns, so the measured average run time of successful runs is the floor. The prompt token estimate is the new text ÷ 4, plus 3000 on a conversation's first run. Speeds start from the config and follow the backend's reported `timings` (llama.cpp) as a moving average. Requests that processed fewer than 500 prompt tokens don't count, since they measure overhead more than speed.
 
-Every run appends its timing to `metrics.jsonl`: predicted and actual total time, queue wait, run time, model turns, token counts and every request's speeds. `clangy timings` summarizes them across all conversations.
+Every run's timing and token counts go into `metrics.jsonl`, see Metrics.
 
 The deadline (`run_deadline`) starts when the run leaves the queue. pi is killed when it passes.
 
@@ -112,6 +112,22 @@ Sent: the agent writes files in its work folder (by convention `out/`) and calls
 ## Store
 
 `<data_dir>/store` holds `tickets/T-0001.md`, `notes/N-0001.md`, `plans/P-0001.md` and `records/<thread>.md`. The agent reads it through the read-only `store` link and searches it with grep. Writes go through host tools, which assign numbers with exclusive file creation, validate the title and body, and add the thread link, game and the conversation's `files` folder to the frontmatter. `ticket_add_report` appends a repeated report to an existing ticket.
+
+## Metrics
+
+Every run, answered or not, appends one JSON line to its conversation's `metrics.jsonl`. JSONL keeps it append-only and easy to load into pandas or DuckDB later. `clangy timings` summarizes all of them.
+
+| Field | Meaning |
+|---|---|
+| `time`, `thread_id`, `channel_id`, `game`, `backend`, `model`, `run` | When and where. `run` counts the conversation's answered runs. |
+| `ok`, `timed_out`, `backend_failed`, `error` | Outcome. `error` holds pi's error or exit status. |
+| `answer_chars`, `tools`, `steps` | Answer length, the tools called in order, model turns. |
+| `predicted_seconds`, `queue_seconds`, `run_seconds`, `total_seconds` | The ETA at trigger time, the wait for the backend, the run itself, and trigger to answer. |
+| `prompt_estimate` | The prompt token estimate behind the ETA. |
+| `prompt_tokens`, `cached_tokens`, `completion_tokens` | Sums over the run's requests. |
+| `requests` | One entry per backend request: `time`, `slot`, `status`, `seconds`, `first_token_seconds`, `prompt_tokens`, `cached_tokens`, `completion_tokens`, the backend's raw `timings` (llama.cpp: `prompt_n`, `prompt_ms`, `prompt_per_second`, `predicted_n`, `predicted_per_second`, `cache_n`, ...), and `error` if it failed. |
+
+`prompt_tokens` is the whole prompt; `prompt_tokens - cached_tokens` is what the backend actually processed.
 
 ## Backend connections
 

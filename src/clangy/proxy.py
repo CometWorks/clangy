@@ -9,6 +9,7 @@ import logging
 import os
 import socket
 import time
+from datetime import datetime, timezone
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -57,13 +58,18 @@ def _usage_from_event(event: dict, stats: dict) -> None:
         stats["completion_tokens"] = usage.get("completion_tokens", 0)
         stats["cached_tokens"] = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
     if timings:
-        # Short prompts measure mostly fixed overhead, not the prompt processing speed
-        if timings.get("prompt_n", 0) >= MIN_SPEED_SAMPLE:
-            stats["prompt_tps"] = timings.get("prompt_per_second")
-        if timings.get("predicted_n", 0) >= MIN_SPEED_SAMPLE // 10:
-            stats["gen_tps"] = timings.get("predicted_per_second")
+        stats["timings"] = timings
         if "cache_n" in timings:
             stats["cached_tokens"] = timings["cache_n"]
+
+
+def speed_samples(timings: dict) -> tuple[float | None, float | None]:
+    """Prompt and generation speeds worth averaging; short prompts measure mostly fixed overhead."""
+    prompt = timings.get("prompt_per_second") if timings.get("prompt_n", 0) >= MIN_SPEED_SAMPLE else None
+    generation = (
+        timings.get("predicted_per_second") if timings.get("predicted_n", 0) >= MIN_SPEED_SAMPLE // 10 else None
+    )
+    return prompt, generation
 
 
 @contextmanager
@@ -121,15 +127,16 @@ class HostServer:
             headers["Authorization"] = f"Bearer {run.backend.api_key}"
 
         started = time.monotonic()
-        stats: dict = {}
+        stats: dict = {"time": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), "slot": run.slot}
         response: web.StreamResponse | None = None
+        first_token = None
         try:
             async with run.session.post(f"{backend.url}/chat/completions", json=body, headers=headers) as upstream:
+                stats["status"] = upstream.status
                 response = web.StreamResponse(status=upstream.status, headers={"Content-Type": upstream.content_type})
                 await response.prepare(request)
                 if upstream.status >= 500:
                     run.stats.backend_failed = True
-                first_token = None
                 async for line in upstream.content:
                     await response.write(line)
                     if first_token is None:
@@ -140,6 +147,8 @@ class HostServer:
         except (aiohttp.ClientError, TimeoutError) as e:
             log.warning("Backend %s failed: %r", backend.name, e)
             run.stats.backend_failed = True
+            stats["error"] = repr(e)
+            self._record(stats, started, first_token)
             if response is None:
                 return web.json_response({"error": {"message": f"backend unreachable: {e}"}}, status=502)
             return response
@@ -156,4 +165,4 @@ class HostServer:
         if first_token is not None:
             stats["first_token_seconds"] = round(first_token - started, 3)
         s.per_request.append(stats)
-        self.run.backend.record_speed(stats.get("prompt_tps"), stats.get("gen_tps"))
+        self.run.backend.record_speed(*speed_samples(stats.get("timings", {})))

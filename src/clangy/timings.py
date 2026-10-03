@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from statistics import median, quantiles
 
+from clangy.proxy import speed_samples
+
 
 def load(data_dir: Path) -> list[dict]:
     records = []
@@ -22,6 +24,7 @@ def _spread(values: list[float], unit: str) -> str:
 def summarize(records: list[dict]) -> str:
     ok = [r for r in records if r.get("ok")]
     requests = [q for r in ok for q in r.get("requests", [])]
+    speeds = [speed_samples(q.get("timings", {})) for q in requests]
     prompt = sum(r.get("prompt_tokens", 0) for r in ok)
     cached = sum(r.get("cached_tokens", 0) for r in ok)
     errors = [r["total_seconds"] - r["predicted_seconds"] for r in ok if "predicted_seconds" in r]
@@ -32,8 +35,8 @@ def summarize(records: list[dict]) -> str:
         f"Queue wait: {_spread([r['queue_seconds'] for r in ok if 'queue_seconds' in r], ' s')}",
         f"Model turns per answer: {_spread([r['steps'] for r in ok if 'steps' in r], '')}",
         f"Time to first token: {_spread([q['first_token_seconds'] for q in requests if 'first_token_seconds' in q], ' s')}",
-        f"Prompt speed: {_spread([q['prompt_tps'] for q in requests if q.get('prompt_tps')], ' tok/s')}",
-        f"Generation speed: {_spread([q['gen_tps'] for q in requests if q.get('gen_tps')], ' tok/s')}",
+        f"Prompt speed: {_spread([p for p, _ in speeds if p], ' tok/s')}",
+        f"Generation speed: {_spread([g for _, g in speeds if g], ' tok/s')}",
         f"Prompt tokens: {prompt}, cached {cached} ({cached / prompt:.0%})" if prompt else "Prompt tokens: -",
         f"ETA error (actual - predicted): {_spread(errors, ' s')}",
     ]

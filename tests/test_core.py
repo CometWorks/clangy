@@ -221,6 +221,9 @@ async def test_progress_is_edited_every_minute(bot, chat, monkeypatch):
     assert progress.current.startswith("Done.")
     record = json.loads((bot.conversation_dir(1023) / "metrics.jsonl").read_text())
     assert record["total_seconds"] == 120.0 and record["steps"] == 2
+    assert (record["thread_id"], record["channel_id"], record["model"]) == (1023, SUPPORT, "m")
+    assert record["answer_chars"] == len("Done.") and record["error"] is None
+    assert record["requests"][0]["status"] == 200
     assert record["prompt_tokens"] == 100 and record["cached_tokens"] == 80
     assert {"queue_seconds", "run_seconds", "predicted_seconds"} <= record.keys()
 

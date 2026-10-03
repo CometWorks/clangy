@@ -377,6 +377,7 @@ class Clangy:
         """Runs the agent; if it records the game version, runs again with the knowledge mounted."""
         game = conv.game
         stats = RunStats()
+        tools: list[str] = []
         for _ in range(2):
             paths = self._prepare_work_dir(conv)
             port = free_port()
@@ -400,6 +401,8 @@ class Clangy:
 
             async with HostServer(run, paths.socket):
                 result = await self.run_agent(spec, port, remaining, on_state)
+            tools += result.tools
+            result.tools = tools
             if conv.game == game or result.timed_out or stats.backend_failed:
                 return result, stats
             game = conv.game
@@ -560,11 +563,18 @@ class Clangy:
         """Appends the run's timing and token counts to the conversation's metrics.jsonl."""
         record = {
             "time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "thread_id": conv.thread_id,
+            "channel_id": conv.channel_id,
+            "game": conv.game,
             "backend": conv.backend,
+            "model": self.backends[conv.backend].config.model,
             "run": conv.runs + 1,
             "ok": result.answer is not None,
             "timed_out": result.timed_out,
             "backend_failed": stats.backend_failed,
+            "error": result.error,
+            "answer_chars": len(result.answer or ""),
+            "tools": result.tools,
             **timing,
             "prompt_tokens": stats.prompt_tokens,
             "cached_tokens": stats.cached_tokens,

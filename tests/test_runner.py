@@ -82,6 +82,7 @@ async def test_run_pi_parses_events(tmp_path):
         import json
         def emit(e): print(json.dumps(e), flush=True)
         emit({"type": "turn_start"})
+        emit({"type": "tool_execution_start", "toolName": "grep"})
         emit({"type": "message_update", "assistantMessageEvent": {"type": "text_delta"}})
         emit({"type": "agent_end", "messages": [{"role": "assistant", "content": [{"type": "text", "text": "Hi"}]}]})
         """,
@@ -89,7 +90,8 @@ async def test_run_pi_parses_events(tmp_path):
     states = []
     result = await run_pi(spec(tmp_path, sandbox), 1, 10.0, states.append)
     assert result.answer == "Hi"
-    assert states == ["reading", "writing"]
+    assert result.tools == ["grep"]
+    assert states == ["reading", "looking things up", "writing"]
 
 
 async def test_run_pi_deadline(tmp_path):

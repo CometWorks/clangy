@@ -9,7 +9,12 @@ def test_summary(tmp_path):
     runs = [
         {"ok": True, "total_seconds": 30.0, "predicted_seconds": 20.0, "queue_seconds": 0.0, "steps": 2,
          "prompt_tokens": 1000, "cached_tokens": 900,
-         "requests": [{"first_token_seconds": 3.0, "prompt_tps": 340.0, "gen_tps": 60.0}]},
+         "requests": [
+             {"first_token_seconds": 3.0,
+              "timings": {"prompt_n": 900, "prompt_per_second": 340.0, "predicted_n": 80, "predicted_per_second": 60.0}},
+             {"first_token_seconds": 0.5,
+              "timings": {"prompt_n": 20, "prompt_per_second": 40.0, "predicted_n": 5, "predicted_per_second": 20.0}},
+         ]},
         {"ok": True, "total_seconds": 50.0, "predicted_seconds": 60.0, "queue_seconds": 10.0, "steps": 4,
          "prompt_tokens": 1000, "cached_tokens": 700, "requests": []},
         {"ok": False, "timed_out": True, "requests": []},
@@ -20,4 +25,5 @@ def test_summary(tmp_path):
     assert "Time to answer: median 40.0 s" in summary
     assert "Prompt tokens: 2000, cached 1600 (80%)" in summary
     assert "Prompt speed: median 340.0 tok/s, p90 340.0 tok/s" in summary
+    assert "Generation speed: median 60.0 tok/s, p90 60.0 tok/s" in summary
     assert "ETA error (actual - predicted): median 0.0 s" in summary
