@@ -11,7 +11,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `run_deadline` | `600` | Hard limit of a run after it leaves the queue. |
 | `attachment_max_bytes` | 25 MiB | Larger attachments aren't downloaded; the agent gets a note instead. |
 | `answer_max_bytes` | 10 MiB | Total size of the files attached to one answer. Keep it within the server's upload limit. Each file is limited to 5 MB regardless. |
-| `progress_interval` | `10` | Minimum time between progress message edits. |
+| `progress_interval` | `60` | How often the progress message is edited. |
 | `health_interval` | `30` | How often to check backends that lost conversations. |
 | `max_retries` | `3` | Automatic retries after a backend loss. |
 | `secret_markers` | book names, `knowledge/books` | Answers containing any of these (case-insensitive) are withheld. |

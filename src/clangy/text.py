@@ -80,11 +80,20 @@ def timestamp(unix: float) -> str:
     return f"<t:{int(unix)}:R>"
 
 
-def progress(state: str, eta: float | None, deadline: float | None) -> str:
-    text = f"⏳ Got it, working on it: {state}."
+def progress(state: str, steps: int, elapsed: float, eta: float | None, deadline: float | None, now: float) -> str:
+    """Progress message; the minute counter changes on every per-minute edit, so users see it's alive."""
+    minutes = int(elapsed // 60)
+    details = [f"step {steps}"] if steps > 1 else []
+    details.append(f"{minutes} min so far" if minutes else "just started")
+    timing = []
     if eta is not None:
-        text += f" Answer expected {timestamp(eta)}"
-        text += f", deadline {timestamp(deadline)}." if deadline is not None else "."
+        timing.append(f"answer expected {timestamp(eta)}" if eta > now else "taking longer than expected")
+    if deadline is not None:
+        timing.append(f"deadline {timestamp(deadline)}")
+    text = f"⏳ Working on it: {state} ({', '.join(details)})."
+    if timing:
+        sentence = ", ".join(timing)
+        text += f" {sentence[0].upper()}{sentence[1:]}."
     return text
 
 

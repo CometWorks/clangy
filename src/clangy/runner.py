@@ -117,7 +117,8 @@ def build_command(spec: RunSpec, port: int) -> list[str]:
         "LANG": "C.UTF-8",
         "PI_CODING_AGENT_DIR": str(spec.paths.agent_dir),
         "PI_OFFLINE": "1",
-        "CLANGY_SOCKET": str(spec.paths.socket),
+        # Relative to pi's working directory, which keeps it under the unix socket path limit
+        "CLANGY_SOCKET": str(spec.paths.socket.relative_to(spec.paths.work)),
         "CLANGY_PORT": str(port),
         "CLANGY_SYSTEM_PROMPT": str(spec.paths.system_prompt),
     }

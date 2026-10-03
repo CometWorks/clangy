@@ -17,7 +17,7 @@ async def test_queue_positions_and_parallel_limit():
     third = asyncio.create_task(backend.acquire("c"))
     await asyncio.sleep(0.01)
     assert [backend.queue_position(c) for c in "abc"] == [0, 1, 2]
-    await backend.release("a", 10.0)
+    await backend.release("a")
     await second
     assert backend.queue_position("c") == 1
     assert not third.done()
@@ -25,11 +25,15 @@ async def test_queue_positions_and_parallel_limit():
     await third
 
 
-async def test_estimate_uses_measured_speeds():
+async def test_estimate_uses_measured_speeds_and_run_times():
     backend = Backend(config(prompt_tps=100, gen_tps=10))
+    backend.run_seconds = 5.0
     assert backend.estimate("x", prompt_tokens=1000, answer_tokens=100) == 20.0
     backend.record_speed(200, None)
     assert backend.prompt_tps == 130
+    backend.record_run(105.0)
+    assert backend.run_seconds == 35.0
+    assert backend.estimate("x", prompt_tokens=1000, answer_tokens=100) == 35.0
 
 
 async def test_slots_are_pinned_saved_and_restored(backend):

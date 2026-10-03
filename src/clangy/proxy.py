@@ -6,8 +6,11 @@ and serves the host-side tools (tickets, notes, plans, game version).
 
 import json
 import logging
+import os
+import socket
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -19,6 +22,8 @@ from clangy.backend import Backend
 log = logging.getLogger(__name__)
 
 ToolHandler = Callable[[str, dict], Awaitable[str]]
+MIN_SPEED_SAMPLE = 500
+"""Prompt tokens a request must process to count as a speed sample."""
 
 
 class ToolError(ValueError):
@@ -52,10 +57,23 @@ def _usage_from_event(event: dict, stats: dict) -> None:
         stats["completion_tokens"] = usage.get("completion_tokens", 0)
         stats["cached_tokens"] = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
     if timings:
-        stats["prompt_tps"] = timings.get("prompt_per_second")
-        stats["gen_tps"] = timings.get("predicted_per_second")
+        # Short prompts measure mostly fixed overhead, not the prompt processing speed
+        if timings.get("prompt_n", 0) >= MIN_SPEED_SAMPLE:
+            stats["prompt_tps"] = timings.get("prompt_per_second")
+        if timings.get("predicted_n", 0) >= MIN_SPEED_SAMPLE // 10:
+            stats["gen_tps"] = timings.get("predicted_per_second")
         if "cache_n" in timings:
             stats["cached_tokens"] = timings["cache_n"]
+
+
+@contextmanager
+def short_path(path: Path) -> Iterator[str]:
+    """Unix socket paths are limited to 107 bytes; going through a directory fd keeps any path short."""
+    fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        yield f"/proc/self/fd/{fd}/{path.name}"
+    finally:
+        os.close(fd)
 
 
 class HostServer:
@@ -71,7 +89,10 @@ class HostServer:
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         self.socket_path.unlink(missing_ok=True)
         await self._runner.setup()
-        await web.UnixSite(self._runner, str(self.socket_path)).start()
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        with short_path(self.socket_path) as path:
+            sock.bind(path)
+        await web.SockSite(self._runner, sock).start()
         return self
 
     async def __aexit__(self, *exc) -> None:

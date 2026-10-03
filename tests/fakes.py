@@ -31,6 +31,7 @@ class FakeBackend:
         self.status = 200
         self.prompt_tokens = 100
         self.cached_tokens = 80
+        self.processed_tokens = 1000
         self._runner: web.AppRunner | None = None
         self.port = 0
 
@@ -88,7 +89,8 @@ class FakeBackend:
             "total_tokens": self.prompt_tokens + 7,
             "prompt_tokens_details": {"cached_tokens": self.cached_tokens},
         }
-        timings = {"prompt_per_second": 500.0, "predicted_per_second": 50.0}
+        timings = {"prompt_n": self.processed_tokens, "predicted_n": 100}
+        timings |= {"prompt_per_second": 500.0, "predicted_per_second": 50.0}
         await response.write(sse({**chunk, "choices": [], "usage": usage, "timings": timings}))
         await response.write(b"data: [DONE]\n\n")
         return response

@@ -67,9 +67,11 @@ One known gap: Qwen chat templates drop the reasoning of earlier turns, so after
 
 ## Progress and ETA
 
-The progress message uses Discord timestamps (`<t:unix:R>`), so clients count down without edits. The host edits it only when the text changes, at most every `progress_interval` seconds. States come from pi's event stream: reading, thinking, writing, looking things up, analyzing, filing a ticket.
+The host edits the progress message in place every `progress_interval` (a minute), so users can tell the run is still going. Example: `⏳ Working on it: looking things up (step 3, 2 min so far). Answer expected in 1 minute, deadline in 8 minutes.` The step is the model turn, and the minute counter changes on every edit. Once the ETA has passed it says "taking longer than expected". ETA and deadline are Discord timestamps (`<t:unix:R>`), which clients count down on their own. States come from pi's event stream: reading, thinking, writing, looking things up, analyzing, preparing files, filing a ticket.
 
-ETA = queue position × average run time ÷ `parallel` + prompt tokens ÷ prompt speed + 500 ÷ generation speed. The prompt token estimate is the new text ÷ 4, plus 3000 on a conversation's first run. Speeds start from the config and follow the backend's reported `timings` (llama.cpp) as a moving average.
+ETA = queue position × average run time ÷ `parallel` + max(prompt tokens ÷ prompt speed + 500 ÷ generation speed, average run time). Runs with tool calls take many model turns, so the measured average run time of successful runs is the floor. The prompt token estimate is the new text ÷ 4, plus 3000 on a conversation's first run. Speeds start from the config and follow the backend's reported `timings` (llama.cpp) as a moving average. Requests that processed fewer than 500 prompt tokens don't count, since they measure overhead more than speed.
+
+Every run appends its timing to `metrics.jsonl`: predicted and actual total time, queue wait, run time, model turns, token counts and every request's speeds. `clangy timings` summarizes them across all conversations.
 
 The deadline (`run_deadline`) starts when the run leaves the queue. pi is killed when it passes.
 
@@ -110,6 +112,12 @@ Sent: the agent writes files in its work folder (by convention `out/`) and calls
 ## Store
 
 `<data_dir>/store` holds `tickets/T-0001.md`, `notes/N-0001.md`, `plans/P-0001.md` and `records/<thread>.md`. The agent reads it through the read-only `store` link and searches it with grep. Writes go through host tools, which assign numbers with exclusive file creation, validate the title and body, and add the thread link, game and the conversation's `files` folder to the frontmatter. `ticket_add_report` appends a repeated report to an existing ticket.
+
+## Backend connections
+
+The proxy opens a new connection for every backend request. llama.cpp closes idle keep-alive connections after 5 seconds, and a request racing that close would look like a lost backend.
+
+The host socket is bound through `/proc/self/fd/<dir fd>/host.sock` and pi connects to it relative to its working directory, because unix socket paths are limited to 107 bytes.
 
 ## Persisted state
 

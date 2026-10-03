@@ -108,15 +108,22 @@ class Conversation(BaseModel):
 RunAgent = Callable[[RunSpec, int, float, Callable[[str], None]], Awaitable[RunResult]]
 
 
+QUEUED = "waiting in queue"
+
+
 @dataclass
 class Progress:
-    state: str = "waiting in queue"
+    state: str = QUEUED
     eta: float | None = None
     deadline: float | None = None
     retry: int = 0
+    steps: int = 0
+    """Model turns so far."""
+    started: float = field(default_factory=lambda: time.time())
 
     def render(self, max_retries: int) -> str:
-        message = text.progress(self.state, self.eta, self.deadline)
+        now = time.time()
+        message = text.progress(self.state, self.steps, now - self.started, self.eta, self.deadline, now)
         return f"{message} (retry {self.retry}/{max_retries})" if self.retry else message
 
 
@@ -141,7 +148,12 @@ class Clangy:
     @property
     def http(self) -> aiohttp.ClientSession:
         if self._http is None:
-            self._http = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=None, sock_connect=10))
+            # No connection reuse: llama.cpp drops idle keep-alive connections after 5 s, and a request racing
+            # that close would look like a lost backend. A connect per request is nothing next to inference.
+            self._http = aiohttp.ClientSession(
+                connector=aiohttp.TCPConnector(force_close=True),
+                timeout=aiohttp.ClientTimeout(total=None, sock_connect=10),
+            )
         return self._http
 
     async def close(self) -> None:
@@ -280,6 +292,7 @@ class Clangy:
         first_run = not RunPaths(self._work_dir(conv)).session.exists()
         prompt_tokens = len(prompt) // 4 + (FIRST_RUN_TOKENS if first_run else 0)
         progress.eta = time.time() + backend.estimate(conv.key, prompt_tokens, ANSWER_TOKENS)
+        timing = {"predicted_seconds": round(progress.eta - progress.started, 1), "prompt_estimate": prompt_tokens}
         shown = progress.render(self.config.max_retries)
         await self._show(conv, shown)
         updater = asyncio.create_task(self._update_progress(conv, progress, shown))
@@ -298,6 +311,7 @@ class Clangy:
         try:
             await backend.acquire(conv.key)
             started = time.monotonic()
+            timing["queue_seconds"] = round(time.time() - progress.started, 1)
             try:
                 conv.status = "running"
                 self.save(conv)
@@ -306,10 +320,15 @@ class Clangy:
                 progress.deadline = time.time() + self.config.run_deadline
                 result, stats = await self._execute(conv, backend, prompt, progress, delivered)
             finally:
-                await backend.release(conv.key, time.monotonic() - started)
+                timing["run_seconds"] = round(time.monotonic() - started, 1)
+                await backend.release(conv.key)
         finally:
             updater.cancel()
-        self._log_metrics(conv, result, stats)
+        if result.answer is not None:
+            backend.record_run(timing["run_seconds"])
+        timing["total_seconds"] = round(time.time() - progress.started, 1)
+        timing["steps"] = progress.steps
+        self._log_metrics(conv, result, stats, timing)
         del self._outboxes[conv.thread_id]
         await self._finish(conv, result, stats, consumed, delivered, outbox)
 
@@ -375,6 +394,8 @@ class Clangy:
             remaining = max(1.0, (progress.deadline or 0) - time.time())
 
             def on_state(state: str) -> None:
+                if state == "reading":
+                    progress.steps += 1
                 progress.state = state
 
             async with HostServer(run, paths.socket):
@@ -382,8 +403,11 @@ class Clangy:
             if conv.game == game or result.timed_out or stats.backend_failed:
                 return result, stats
             game = conv.game
-            prompt = conv.host_notes[-1]
-            delivered.append(prompt)
+            delivered.append(conv.host_notes[-1])
+            # The text of the run that called set_game is never shown, so the model must answer again
+            prompt = (
+                f"{conv.host_notes[-1]} Now write your answer to the user's messages; don't refer to earlier drafts."
+            )
         return result, stats
 
     def _prompt(self, conv: Conversation) -> str:
@@ -396,7 +420,7 @@ class Clangy:
         return "\n".join(lines)
 
     def _knowledge_note(self, game: Game) -> str:
-        return f"[host] This conversation is about {game.upper()}. Its knowledge is under knowledge/."
+        return f"[host] This conversation is about {game.upper()}. Its knowledge is under knowledge/. Don't mention this note."
 
     # Work folder and sandbox
 
@@ -524,21 +548,27 @@ class Clangy:
         backend = self.backends[conv.backend]
         while True:
             await asyncio.sleep(self.config.progress_interval)
-            if progress.state == "waiting in queue":
+            if progress.state.startswith(QUEUED):
                 position = backend.queue_position(conv.key)
-                progress.state = f"waiting in queue (position {position})" if position > 1 else progress.state
+                progress.state = f"{QUEUED}, position {position}" if position > 1 else QUEUED
             current = progress.render(self.config.max_retries)
             if current != shown:
                 await self.chat.edit(conv.thread_id, conv.progress_message_id, current)
                 shown = current
 
-    def _log_metrics(self, conv: Conversation, result: RunResult, stats: RunStats) -> None:
+    def _log_metrics(self, conv: Conversation, result: RunResult, stats: RunStats, timing: dict) -> None:
+        """Appends the run's timing and token counts to the conversation's metrics.jsonl."""
         record = {
             "time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "backend": conv.backend,
             "run": conv.runs + 1,
             "ok": result.answer is not None,
             "timed_out": result.timed_out,
             "backend_failed": stats.backend_failed,
+            **timing,
+            "prompt_tokens": stats.prompt_tokens,
+            "cached_tokens": stats.cached_tokens,
+            "completion_tokens": stats.completion_tokens,
             "requests": stats.per_request,
         }
         with open(self.conversation_dir(conv.thread_id) / "metrics.jsonl", "a") as f:

@@ -44,6 +44,16 @@ def test_footer_goes_to_the_last_part():
 
 
 def test_progress_uses_discord_timestamps():
-    message = text.progress("reading", eta=1000.5, deadline=2000)
-    assert "reading" in message and "<t:1000:R>" in message and "<t:2000:R>" in message
-    assert "<t:" not in text.progress("waiting in queue", None, None)
+    message = text.progress("reading", steps=1, elapsed=5, eta=1000.5, deadline=2000, now=900)
+    assert message == "⏳ Working on it: reading (just started). Answer expected <t:1000:R>, deadline <t:2000:R>."
+    assert (
+        text.progress("waiting in queue", 0, 0, None, None, now=0)
+        == "⏳ Working on it: waiting in queue (just started)."
+    )
+
+
+def test_progress_counts_minutes_and_steps_and_overruns():
+    message = text.progress("looking things up", steps=3, elapsed=185, eta=1000, deadline=2000, now=1100)
+    assert message == (
+        "⏳ Working on it: looking things up (step 3, 3 min so far). Taking longer than expected, deadline <t:2000:R>."
+    )

@@ -55,9 +55,11 @@ class Backend:
             self._running.add(conversation)
             self._changed.notify_all()
 
-    async def release(self, conversation: str, seconds: float | None = None) -> None:
-        if seconds is not None:
-            self.run_seconds += EMA_WEIGHT * (seconds - self.run_seconds)
+    def record_run(self, seconds: float) -> None:
+        """Records the duration of a successful run, the floor of later estimates."""
+        self.run_seconds += EMA_WEIGHT * (seconds - self.run_seconds)
+
+    async def release(self, conversation: str) -> None:
         async with self._changed:
             self._running.discard(conversation)
             self._changed.notify_all()
@@ -73,9 +75,13 @@ class Backend:
             self.gen_tps += EMA_WEIGHT * (gen_tps - self.gen_tps)
 
     def estimate(self, conversation: str, prompt_tokens: int, answer_tokens: int) -> float:
-        """Seconds until the answer is expected."""
+        """Seconds until the answer is expected.
+
+        Runs with tool calls take several model turns, so the typical run time is the floor.
+        """
         queued = self.queue_position(conversation) * self.run_seconds / self.config.parallel
-        return queued + prompt_tokens / self.prompt_tps + answer_tokens / self.gen_tps
+        tokens = prompt_tokens / self.prompt_tps + answer_tokens / self.gen_tps
+        return queued + max(tokens, self.run_seconds)
 
     async def check_health(self, session: aiohttp.ClientSession) -> bool:
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}

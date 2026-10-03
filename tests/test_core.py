@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
@@ -8,6 +9,7 @@ import pytest
 from clangy import text
 from clangy.config import BackendConfig, ChannelConfig, Config
 from clangy.core import Attachment, Clangy, IncomingMessage
+from clangy.proxy import short_path
 from clangy.runner import RunResult, RunSpec
 
 GUILD = 1
@@ -17,10 +19,10 @@ Step = Callable[["FakeAgent", RunSpec], Awaitable[RunResult]]
 
 
 async def host(spec: RunSpec, path: str, body: dict) -> tuple[int, dict | str]:
-    connector = aiohttp.UnixConnector(path=str(spec.paths.socket))
-    async with aiohttp.ClientSession(connector=connector) as http:
-        async with http.post(f"http://host{path}", json=body) as r:
-            return r.status, await r.json() if path.startswith("/tools") else await r.text()
+    with short_path(spec.paths.socket) as socket:
+        async with aiohttp.ClientSession(connector=aiohttp.UnixConnector(path=socket)) as http:
+            async with http.post(f"http://host{path}", json=body) as r:
+                return r.status, await r.json() if path.startswith("/tools") else await r.text()
 
 
 def answer(reply: str) -> Step:
@@ -70,6 +72,7 @@ class FakeAgent:
 
     async def __call__(self, spec: RunSpec, port: int, deadline: float, on_state) -> RunResult:
         self.specs.append(spec)
+        self.on_state = on_state
         on_state("reading")
         step = self.script.pop(0) if self.script else answer("Default answer.")
         return await step(self, spec)
@@ -194,6 +197,34 @@ async def test_progress_shows_queue_position(bot, chat, config):
     await bot.wait_idle()
 
 
+async def test_progress_is_edited_every_minute(bot, chat, monkeypatch):
+    clock = [1_000_000.0]
+    monkeypatch.setattr("clangy.core.time.time", lambda: clock[0])
+    release = asyncio.Event()
+
+    async def two_turns(agent: FakeAgent, spec: RunSpec) -> RunResult:
+        agent.on_state("looking things up")
+        agent.on_state("reading")
+        await release.wait()
+        return await answer("Done.")(agent, spec)
+
+    bot.agent.script = [two_turns]
+    await bot.on_message(forum_post(SUPPORT, 1023, "Slow one"))
+    await asyncio.sleep(0.05)
+    [progress] = chat.in_channel(1023)
+    for minute in (1, 2):
+        clock[0] += 60
+        await asyncio.sleep(0.05)
+        assert f"(step 2, {minute} min so far)" in progress.current
+    release.set()
+    await bot.wait_idle()
+    assert progress.current.startswith("Done.")
+    record = json.loads((bot.conversation_dir(1023) / "metrics.jsonl").read_text())
+    assert record["total_seconds"] == 120.0 and record["steps"] == 2
+    assert record["prompt_tokens"] == 100 and record["cached_tokens"] == 80
+    assert {"queue_seconds", "run_seconds", "predicted_seconds"} <= record.keys()
+
+
 async def test_long_answers_are_split(bot, chat):
     long_answer = "\n\n".join(f"Paragraph {i}. " + "x" * 900 for i in range(3))
     bot.agent.script = [answer(long_answer)]
@@ -276,7 +307,7 @@ async def test_set_game_mounts_knowledge_and_continues(bot, chat, config):
     await bot.wait_idle()
     first, second = bot.agent.specs
     assert knowledge.parent.resolve() not in first.read_only
-    assert second.prompt == "[host] This conversation is about SE2. Its knowledge is under knowledge/."
+    assert second.prompt.startswith("[host] This conversation is about SE2. Its knowledge is under knowledge/.")
     assert (second.paths.work / "knowledge" / "skills").is_dir()
     assert knowledge.parent.resolve() in second.read_only
     conv = bot.conversations[1012]
