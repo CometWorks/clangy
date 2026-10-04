@@ -118,6 +118,11 @@ async def check(config: Config, config_path: Path) -> bool:
         for source in sources:
             ok &= links[source.link] is not None
             print(f"  {name} {source.link}: {links[source.link] or 'MISSING'}")
+
+    print("Python environment:")
+    venv = await live.python_env()
+    ok &= venv is not None
+    print(f"  {venv or 'FAILED, see the log'}")
     await live.close()
 
     print("Sandbox:")

@@ -26,7 +26,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 
 1. A trigger (see below) posts a progress message right away and starts the conversation's worker. A trigger during a run sets a flag, and the worker runs again afterwards.
 2. The worker picks the backend (see Backends) and waits for a slot on it. The progress message shows the ETA (see Progress and ETA).
-3. The host snapshots the pi session file, refreshes the work folder links (`attachments`, `store`, `guide`, the game's knowledge), installs the work folder's Python environment on the conversation's first run, writes pi's `models.json` and `settings.json`, and opens the host socket.
+3. The host snapshots the pi session file, refreshes the work folder links (`attachments`, `store`, `guide`, the game's knowledge), writes pi's `models.json` and `settings.json`, and opens the host socket.
 4. pi runs in firejail with `--mode json --print --session <file>`. The prompt is a `[host]` timestamp line, then every queued message as `Name: text` plus attachment notes. In forums, a note gives the post's title when the model hasn't seen it yet or it changed, since the title is often the question itself.
 5. On success the queued messages are dropped, the answer replaces the progress message, and parts over 2000 characters go into follow-up messages. Every answer ends with the fixed mention reminder.
 6. On a timeout, backend failure or other failure the session file is restored from the snapshot, so partial output never reaches the next run, and the queued messages stay queued.
@@ -56,7 +56,7 @@ pi runs as `firejail ... -- env -i <vars> pi ...`:
 
 - `--net=none`: the sandbox has only its own loopback. The pi extension listens on `127.0.0.1:$CLANGY_PORT` and pipes connections to the host socket in the work folder. That socket is the only way out.
 - The environment is replaced. The Discord token and backend API keys stay on the host. The proxy adds the API key to forwarded requests.
-- The work folder is the only writable path. The attachments, the store, the guide, the `[[mounts]]` (the nas: `~/repos`), the conversation's knowledge snapshot, the package and the configured `sandbox.read_only` paths (node, pi, uv's Pythons) are read-only. `sandbox.env` adds environment variables, e.g. to keep uv offline for the skills' scripts.
+- The work folder is the only writable path. The attachments, the store, the guide, the `[[mounts]]` (the nas: `~/repos`), the conversation's knowledge snapshot, the shared Python environment, the package and the configured `sandbox.read_only` paths (node, pi, uv's Pythons) are read-only. `sandbox.env` adds environment variables, e.g. to keep uv offline for the skills' scripts.
 - No capabilities, no root, seccomp, private `/dev` and `/tmp`.
 - No per-sandbox memory limit: firejail's `--rlimit-as` breaks Node.js, whose WebAssembly reserves large address ranges. The systemd unit caps the whole service with `MemoryMax` and `TasksMax` instead.
 
@@ -64,7 +64,14 @@ With `sandbox.proxy` set, commands in the sandbox can also reach an HTTP proxy w
 
 `clangy check` and `clangy run` test the proxy from inside the sandbox: an unreachable proxy is only reported, a proxy that lets `example.com` through stops the start.
 
-Each work folder has its own Python environment in `.venv`, first on the sandbox's `PATH`, so `python3` has numpy, matplotlib and pydantic. The host installs it before the conversation's first run with `uv sync --frozen` from `workspace/pyproject.toml` and its `uv.lock`, which pin the versions, so it comes from uv's cache without network after the first time. uv copies the files instead of hardlinking them from its cache: the agent may write into its work folder, and a write into a hardlinked file would change it for every conversation. A failed install is logged and the answer goes ahead without it. To change the packages, edit `workspace/pyproject.toml` and run `uv lock` there; existing work folders keep their environment.
+All sandboxes share one Python environment, mounted read-only with its `bin/` first on the `PATH`, so `python3` has numpy, matplotlib and pydantic. Python finds the venv from the `pyvenv.cfg` next to the interpreter, so nothing else needs activating, and the sandbox needs neither uv nor the project files for it. The host builds it on first use with `uv sync --frozen --compile-bytecode` from `workspace/pyproject.toml` and its `uv.lock`, in `<data_dir>/python/<hash>/.venv`:
+
+- A venv holds absolute paths (`pyvenv.cfg`, script shebangs), so it can't be moved after the build. firejail mounts it at the same path, so they stay valid. The folder is named after a hash of the lock and the interpreter's real path, so a changed lock (after a deploy) or a new Python version (after an upgrade) gets a new folder, and answers already running on the old one go on. A `.complete` marker tells a finished build from one cut short, which is built again. Old folders aren't removed.
+- Bytecode is compiled at build time, since Python can't write `__pycache__` into a read-only mount and would otherwise compile numpy and matplotlib on every run.
+- uv may hardlink the files from its cache: the sandboxes can't write to them, and the cache isn't visible inside.
+- A failed build is logged, and answers go ahead without the environment. `clangy check` builds it and reports its path.
+
+To change the packages, edit `workspace/pyproject.toml`, run `uv lock` there, and deploy.
 
 The prompt also offers `pandoc` and the archive tools (`tar`, `gzip`, `xz`, `bzip2`, `zstd`, `zip`, `unzip`, `7z`) from the host's `/usr/bin`.
 
@@ -197,11 +204,11 @@ The host socket is bound through `/proc/self/fd/<dir fd>/host.sock` and pi conne
 
 ## Persisted state
 
-`<data_dir>/messages.sqlite` caches the messages of Clangy's channels (see Context and the message cache).
+`<data_dir>/messages.sqlite` caches the messages of Clangy's channels (see Context and the message cache). `<data_dir>/python/<hash>/` holds the sandboxes' Python environment (see Sandbox).
 
 `<data_dir>/conversations/<thread id>/`:
 
 - `state.json`: channel, backend and the conversation's size after its last answer (for the switch rule), game, forum title, status, queued messages, pending `[host]` notes, the conversation's known messages, progress message id, retry and answer counts, the files already sent. Host only.
 - `files/`: `received/` attachments, `sent/<run>/` files sent in answers, `outbox/` while a run is staging files. Host only.
-- `work/`: the sandbox's folder: the files the agent writes (`out/`), the Python environment (`.venv`, `pyproject.toml`, `uv.lock`), the `attachments`, `store`, `guide` and knowledge links, `.pi/` (session, its snapshot `session.bak` from before the current run, system prompt, pi config) and, during a run, `.clangy/host.sock` and `.clangy/proxy.sock`.
+- `work/`: the sandbox's folder: the files the agent writes (`out/`), the `attachments`, `store`, `guide` and knowledge links, `.pi/` (session, its snapshot `session.bak` from before the current run, system prompt, pi config) and, during a run, `.clangy/host.sock` and `.clangy/proxy.sock`.
 - `metrics.jsonl`: per-request token and timing stats.

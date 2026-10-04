@@ -65,6 +65,8 @@ class RunSpec:
     """Host paths the sandbox may read: knowledge, store, guide."""
     proxy_port: int | None = None
     """Sandbox port bridged to the filtering proxy, if one is configured."""
+    venv: Path | None = None
+    """The shared Python environment, mounted read-only and first on the PATH."""
 
 
 @dataclass
@@ -118,7 +120,7 @@ def pi_arguments(spec: RunSpec) -> list[str]:
 def build_command(spec: RunSpec, port: int) -> list[str]:
     """Command line running pi with a clean environment, inside firejail unless disabled."""
     env = {
-        "PATH": f"{SANDBOX_BIN}:{spec.paths.work / '.venv' / 'bin'}:{spec.sandbox.path}",
+        "PATH": ":".join([str(SANDBOX_BIN), *([f"{spec.venv}/bin"] if spec.venv else []), spec.sandbox.path]),
         "HOME": str(spec.paths.work),
         "LANG": "C.UTF-8",
         "PI_CODING_AGENT_DIR": str(spec.paths.agent_dir),
@@ -147,7 +149,7 @@ def build_command(spec: RunSpec, port: int) -> list[str]:
         "--private-dev", "--private-tmp",
         f"--whitelist={spec.paths.work}", f"--read-write={spec.paths.work}",
     ]  # fmt: skip
-    read_only = [*spec.read_only, PACKAGE_DIR, *map(Path, spec.sandbox.read_only)]
+    read_only = [*spec.read_only, PACKAGE_DIR, *([spec.venv] if spec.venv else []), *map(Path, spec.sandbox.read_only)]
     for path in read_only:
         jail += [f"--whitelist={path}", f"--read-only={path}"]
     return [*jail, "--", *command]

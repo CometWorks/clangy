@@ -8,11 +8,11 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 |---|---|
 | `~/clangy/` | The working copy, replaced by every deploy. Its `.venv` is installed there with Python 3.13 from Debian. |
 | `~/clangy.toml` | The config, mode 600 since it holds the Discord token. `deploy/clangy.toml` is its template; deploys never touch it. |
-| `~/data/` | Conversations, store, metrics. |
+| `~/data/` | Conversations, store, metrics, the message cache, the sandboxes' Python environment (`python/`). |
 | `~/skills`, `~/skills2`, `~/se-dev-books`, `~/se2-dev-books`, `~/.se-dev`, `~/.se2-dev` | The prepared knowledge, used in place. |
 | `~/repos/` | Ecosystem and plugin repositories, mounted read-only into every conversation as `repos`; `~/repos/clone-or-pull` updates them daily. |
 | `~/.pi/agent/bin/pi` | pi, installed by its own installer, with Node.js under `~/.local/share/pi-node`. |
-| `~/.local/bin/uv` | uv: deploys, and the work folders' Python environments (`sandbox.uv`). Its cache in `~/.cache/uv` holds the packages they are copied from. |
+| `~/.local/bin/uv` | uv: deploys, and the sandboxes' Python environment (`sandbox.uv`), which hardlinks the packages from uv's cache in `~/.cache/uv`. |
 
 The sandbox may read pi's `bin` and `install` folders and its Node.js, but not the rest of `~/.pi/agent` (`auth.json`, pi's own sessions). Lingering is enabled for `clangy`, so its user services run without a login.
 
@@ -88,7 +88,7 @@ clangy [--config FILE] run | check | sync-knowledge | timings
 cd ~/clangy && .venv/bin/clangy --config ~/clangy.toml check
 ```
 
-Without Discord, this checks the backends, the knowledge links, the sandbox (a probe run through the real sandbox command line: no network, the config and other conversations hidden, work folder writable, pi, node and python3 present) and one real answer.
+Without Discord, this checks the backends, the knowledge links, the Python environment (building it if needed), the sandbox (a probe run through the real sandbox command line: no network, the config and other conversations hidden, work folder writable, pi, node and python3 present) and one real answer.
 
 The test suite runs on the host too, including the real pi test:
 

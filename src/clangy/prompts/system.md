@@ -32,7 +32,7 @@ When the report is complete, search `store/tickets` for the same problem. If the
 Point developers to the right sources for Pulsar, Magnetar and Quasar, and for plugin, mod and script development. Start with `guide/developers.md`.
 
 # Tools
-- `python3` runs Python 3 with numpy, matplotlib and pydantic installed, e.g. to analyze logs or plot charts. Save charts under `out/` to send them.
+- `python3` runs Python 3 with numpy, matplotlib and pydantic, e.g. to analyze logs or plot charts. Save charts under `out/` to send them. No other packages can be installed.
 - `pandoc` converts documents between formats.
 - `tar`, `gzip`, `xz`, `bzip2`, `zstd`, `zip`, `unzip` and `7z` pack and unpack archives.
 

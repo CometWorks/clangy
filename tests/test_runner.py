@@ -10,7 +10,14 @@ BACKEND = BackendConfig(name="b", url="http://x/v1", model="qwen", thinking="low
 
 
 def spec(tmp_path: Path, sandbox: SandboxConfig, prompt: str = "[host] hi") -> RunSpec:
-    return RunSpec(paths=RunPaths(tmp_path), backend=BACKEND, sandbox=sandbox, prompt=prompt, read_only=[Path("/k")])
+    return RunSpec(
+        paths=RunPaths(tmp_path),
+        backend=BACKEND,
+        sandbox=sandbox,
+        prompt=prompt,
+        read_only=[Path("/k")],
+        venv=Path("/v"),
+    )
 
 
 def test_firejail_command(tmp_path):
@@ -19,13 +26,12 @@ def test_firejail_command(tmp_path):
     jail, inner = command[:separator], command[separator + 1 :]
     assert jail[0] == "firejail" and "--net=none" in jail and "--noroot" in jail
     assert f"--whitelist={tmp_path}" in jail and f"--read-write={tmp_path}" in jail
-    for path in ("/k", "/opt/node"):
+    for path in ("/k", "/opt/node", "/v"):
         assert f"--read-only={path}" in jail
     assert inner[:2] == ["env", "-i"]
     assert f"HOME={tmp_path}" in inner and "CLANGY_PORT=4321" in inner and "UV_OFFLINE=1" in inner
-    assert (
-        next(a for a in inner if a.startswith("PATH=")).split(":")[1] == f"{tmp_path}/.venv/bin"
-    ), "the work folder's Python"
+    path = next(a for a in inner if a.startswith("PATH="))
+    assert path.split(":")[1] == "/v/bin", "the shared Python environment"
     # Secrets from the host environment never reach the sandbox
     assert not any(arg.startswith(("DISCORD", "CLANGY_TEST_KEY")) for arg in inner)
     assert inner[-1] == "[host] hi"

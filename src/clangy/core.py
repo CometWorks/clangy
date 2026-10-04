@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -31,7 +32,7 @@ log = logging.getLogger(__name__)
 SYSTEM_PROMPT = PACKAGE_DIR / "prompts" / "system.md"
 GUIDE_DIR = PACKAGE_DIR / "guide"
 WORKSPACE_DIR = PACKAGE_DIR / "workspace"
-"""pyproject.toml and uv.lock of the Python environment in every work folder."""
+"""pyproject.toml and uv.lock of the sandboxes' shared Python environment."""
 ANSWER_TOKENS = 500
 FIRST_RUN_TOKENS = 3000
 """System prompt and tool definitions, processed only on the first run of a conversation."""
@@ -179,6 +180,7 @@ class Clangy:
         self._first_answer: dict[int, asyncio.Task] = {}
         """Delayed first answers to new forum threads."""
         self._wake: dict[int, bool] = {}
+        self._python_lock = asyncio.Lock()
         self._http: aiohttp.ClientSession | None = None
 
     @property
@@ -631,9 +633,9 @@ class Clangy:
         game = conv.game
         stats = RunStats()
         tools: list[str] = []
+        venv = await self.python_env()
         for _ in range(2):
             paths, read_only = self._prepare_work_dir(conv)
-            await self._prepare_python(paths.work)
             port = free_port()
             write_pi_config(paths, backend.config, port)
             slot = await backend.take_slot(self.http, conv.key, time.monotonic())
@@ -646,6 +648,7 @@ class Clangy:
                 prompt=prompt,
                 read_only=read_only,
                 proxy_port=free_port() if self.config.sandbox.proxy else None,
+                venv=venv,
             )
             remaining = max(1.0, (progress.deadline or 0) - time.time())
 
@@ -756,29 +759,52 @@ class Clangy:
         paths.system_prompt.write_text(system)
         return paths, [target for target in links.values() if target is not None]
 
-    async def _prepare_python(self, work: Path) -> None:
-        """Installs the work folder's Python environment once, on the host, since the sandbox has no network.
+    async def python_env(self) -> Path | None:
+        """The sandboxes' shared Python environment, mounted read-only and first on their PATH. Built on first use.
 
-        Files are copied from uv's cache, not hardlinked: a sandbox writing into a hardlinked file would change
-        it for every conversation.
+        It lives in a folder named after the lock and the interpreter, since a venv holds absolute paths and can't be
+        moved: a changed lock or a new Python gets a new folder while runs on the old one go on. uv may hardlink
+        from its cache, the sandboxes can't write to it. Bytecode is compiled up front, a read-only venv can't
+        cache it.
         """
-        if (work / ".venv" / "bin" / "python").exists():
-            return
-        for name in ("pyproject.toml", "uv.lock"):
-            shutil.copyfile(WORKSPACE_DIR / name, work / name)
-        sandbox = self.config.sandbox
-        env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"} | {"UV_LINK_MODE": "copy"}
-        try:
-            process = await asyncio.create_subprocess_exec(
-                sandbox.uv, "sync", "--frozen", "--quiet", "--python", sandbox.python,
-                cwd=work, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            )  # fmt: skip
-            output, _ = await process.communicate()
-        except OSError as e:
-            log.warning("No Python environment for %s: %r", work, e)
-            return
-        if process.returncode != 0:
-            log.warning("No Python environment for %s: %s", work, output.decode(errors="replace")[-1000:])
+        interpreter = shutil.which(self.config.sandbox.python)
+        if interpreter is None:
+            log.warning("No Python environment: %s not found", self.config.sandbox.python)
+            return None
+        interpreter = os.path.realpath(interpreter)
+        lock = (WORKSPACE_DIR / "uv.lock").read_bytes()
+        folder = self.config.data_dir / "python" / hashlib.sha256(lock + interpreter.encode()).hexdigest()[:16]
+        async with self._python_lock:
+            if (folder / ".complete").exists():
+                return folder / ".venv"
+            shutil.rmtree(folder, ignore_errors=True)
+            folder.mkdir(parents=True)
+            for name in ("pyproject.toml", "uv.lock"):
+                shutil.copyfile(WORKSPACE_DIR / name, folder / name)
+            command = [
+                self.config.sandbox.uv,
+                "sync",
+                "--frozen",
+                "--compile-bytecode",
+                "--quiet",
+                "--python",
+                interpreter,
+            ]
+            env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *command, cwd=folder, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+                )
+                output, _ = await process.communicate()
+            except OSError as e:
+                log.warning("No Python environment: %r", e)
+                return None
+            if process.returncode != 0:
+                log.warning("No Python environment: %s", output.decode(errors="replace")[-1000:])
+                return None
+            (folder / ".complete").touch()
+            log.info("Built the Python environment %s", folder)
+        return folder / ".venv"
 
     def _snapshot_session(self, conv: Conversation) -> None:
         session = RunPaths(self._work_dir(conv)).session

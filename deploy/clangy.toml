@@ -23,7 +23,7 @@ read_only = [
 env = { UV_NO_SYNC = "1", UV_OFFLINE = "1", UV_PYTHON_DOWNLOADS = "never" }
 # squid on the host with a domain allowlist; commands in the sandbox get HTTP(S)_PROXY pointing to it
 proxy = "127.0.0.1:3128"
-# Installs each work folder's Python environment (numpy, matplotlib, pydantic) with Debian's Python
+# Builds the sandboxes' shared Python environment (numpy, matplotlib, pydantic) with Debian's Python
 uv = "/home/clangy/.local/bin/uv"
 python = "/usr/bin/python3"
 

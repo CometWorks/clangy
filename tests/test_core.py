@@ -1,5 +1,6 @@
 import asyncio
 import json
+import shutil
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
@@ -7,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 import pytest
 
-from clangy import text
+from clangy import core, text
 from clangy.config import BackendConfig, ChannelConfig, Config, KnowledgeSource
 from clangy.core import Attachment, Clangy, Conversation, IncomingMessage
 from clangy.proxy import short_path
@@ -908,14 +909,31 @@ async def test_priority_decides_before_speed(config, chat, backend, backend2):
     await bot.close()
 
 
-async def test_work_folder_gets_its_python_environment_once(bot):
+async def test_sandboxes_share_one_read_only_python_environment(bot, config):
     await bot.on_message(forum_post(SUPPORT, 1140, "Plot this"))
+    await bot.on_message(forum_post(SUPPORT, 1142, "Plot that"))
     await bot.wait_idle()
-    await bot.on_message(message(1140, "@Clangy again", parent_id=SUPPORT, mentions_bot=True))
-    await bot.wait_idle()
-    work = bot.agent.specs[0].paths.work
-    assert (work / ".uv-calls").read_text() == "sync --frozen --quiet --python python3\n", "once, from the lock"
-    assert (work / "pyproject.toml").read_text().count("numpy") == 1 and (work / "uv.lock").exists()
+    first, second = bot.agent.specs
+    assert first.venv is not None and first.venv == second.venv
+    assert first.venv.parent.parent == config.data_dir / "python"
+    calls = (first.venv.parent / ".uv-calls").read_text().splitlines()
+    assert len(calls) == 1 and calls[0].startswith("sync --frozen --compile-bytecode"), "built once, from the lock"
+    assert not (first.paths.work / "pyproject.toml").exists()
+
+
+async def test_python_environment_is_rebuilt_for_a_new_lock_or_after_a_broken_build(bot, tmp_path, monkeypatch):
+    current = await bot.python_env()
+    (current.parent / ".complete").unlink()
+    assert await bot.python_env() == current
+    assert len((current.parent / ".uv-calls").read_text().splitlines()) == 1, "a broken build starts over"
+
+    workspace = tmp_path / "workspace"
+    shutil.copytree(core.WORKSPACE_DIR, workspace)
+    with open(workspace / "uv.lock", "a") as f:
+        f.write("\n")
+    monkeypatch.setattr(core, "WORKSPACE_DIR", workspace)
+    changed = await bot.python_env()
+    assert changed != current and (current / "bin" / "python").exists(), "the old one stays for running answers"
 
 
 async def test_answers_still_come_without_python_environment(bot, chat, config):
@@ -923,3 +941,4 @@ async def test_answers_still_come_without_python_environment(bot, chat, config):
     await bot.on_message(forum_post(SUPPORT, 1141, "Hi"))
     await bot.wait_idle()
     assert chat.in_channel(1141)[0].current.startswith("Default answer.")
+    assert bot.agent.specs[0].venv is None

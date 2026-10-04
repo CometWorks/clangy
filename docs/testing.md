@@ -4,7 +4,7 @@
 uv run pytest
 ```
 
-The suite runs offline in a few seconds. `tests/conftest.py` fails any connection that isn't loopback or a unix socket, puts a fake `uv` first on `PATH` so work folders never download their Python packages, and CI (`.github/workflows/tests.yml`) runs pytest in a network namespace that has only loopback.
+The suite runs offline in a few seconds. `tests/conftest.py` fails any connection that isn't loopback or a unix socket, puts a fake `uv` first on `PATH` so the sandboxes' Python environment never downloads packages, and CI (`.github/workflows/tests.yml`) runs pytest in a network namespace that has only loopback.
 
 - `tests/fakes.py` has a scripted OpenAI compatible backend (streaming, reasoning, tool calls, usage, llama.cpp `timings` and slot endpoints, and failures: error statuses with `Retry-After`, stalls before and during the stream, errors inside the stream) and a fake Discord `Chat`. The `backend` and `backend2` fixtures start one each.
 - `tests/test_core.py` drives the core through the fake chat with a fake agent that talks to the host socket like the pi extension does: triggers, queueing, splitting, timeouts, backend failures, failover and balancing, game switching, tools, files, the secret guard, restarts.

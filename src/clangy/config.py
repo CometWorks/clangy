@@ -68,9 +68,9 @@ class SandboxConfig(BaseModel):
     proxy: str | None = None
     """host:port of an HTTP proxy the sandbox may use, e.g. a local squid with a domain allowlist."""
     uv: str = "uv"
-    """uv on the host, installs each work folder's Python environment."""
+    """uv on the host, builds the sandboxes' shared Python environment."""
     python: str = "python3"
-    """Interpreter of the work folders' Python environments, must be readable in the sandbox."""
+    """Interpreter of that environment, must be readable in the sandbox."""
 
 
 class KnowledgeSource(BaseModel):
