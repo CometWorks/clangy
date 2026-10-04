@@ -36,6 +36,7 @@ WORKSPACE_DIR = PACKAGE_DIR / "workspace"
 ANSWER_TOKENS = 500
 FIRST_RUN_TOKENS = 3000
 """System prompt and tool definitions, processed only on the first run of a conversation."""
+CACHE_AGE = timedelta(days=2)
 
 
 class HistoryUnavailable(RuntimeError):
@@ -227,8 +228,40 @@ class Clangy:
         tmp.write_text(conv.model_dump_json(indent=2))
         tmp.replace(path)
 
+    def expire(self) -> None:
+        """Deletes the messages and conversations not touched for retention_days, except their metrics.jsonl."""
+        now = datetime.now(timezone.utc)
+        self._prune_cache(now)
+        cutoff = (now - timedelta(days=self.config.retention_days)).timestamp()
+        expired = []
+        for folder in sorted((self.config.data_dir / "conversations").glob("*/")):
+            state = folder / "state.json"
+            contents = [path for path in folder.iterdir() if path.name != "metrics.jsonl"]
+            if not contents or (state if state.exists() else folder).stat().st_mtime >= cutoff:
+                continue
+            # state.json goes last, so an interrupted cleanup is picked up again on the next start
+            for path in sorted(contents, key=lambda path: path == state):
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+            with contextlib.suppress(OSError):
+                folder.rmdir()  # Only if no metrics.jsonl kept it
+            expired.append(folder.name)
+        for record in (self.store.root / "records").glob("*.md"):
+            if record.stat().st_mtime < cutoff:
+                record.unlink()
+                expired.append(f"record {record.stem}")
+        if expired:
+            log.info("Deleted after %s days: %s", self.config.retention_days, ", ".join(expired))
+
+    def _prune_cache(self, now: datetime) -> None:
+        self.cache.prune(now - min(CACHE_AGE, timedelta(days=self.config.retention_days)))
+
     async def load(self) -> None:
-        """Loads persisted conversations. Runs cut short by a restart are reported as failed, never resumed."""
+        """Expires old data, then loads persisted conversations. Runs cut short by a restart are reported as failed,
+        never resumed."""
+        self.expire()
         for path in sorted((self.config.data_dir / "conversations").glob("*/state.json")):
             conv = Conversation.model_validate_json(path.read_text())
             self.conversations[conv.thread_id] = conv
@@ -354,7 +387,7 @@ class Clangy:
         self._live_since = now
         self._covered_since.clear()
         self._caught_up.clear()
-        self.cache.prune(now - timedelta(days=2))
+        self._prune_cache(now)
         for channel in self.config.channels:
             if channel.mode != "mention":
                 continue
