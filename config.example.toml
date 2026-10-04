@@ -120,7 +120,7 @@ url = "https://github.com/blader/humanizer.git"
 
 [[knowledge.se1]]
 link = "knowledge/skills"
-path = "/home/clangy/skills/skills"
+path = "/home/clangy/repos/CometWorks/skills/skills"
 
 [[knowledge.se1]]
 link = "knowledge/books"
@@ -132,7 +132,7 @@ path = "/home/clangy/.se-dev"
 
 [[knowledge.se2]]
 link = "knowledge/skills"
-path = "/home/clangy/skills2/skills"
+path = "/home/clangy/repos/CometWorks/skills2/skills"
 
 [[knowledge.se2]]
 link = "knowledge/books"

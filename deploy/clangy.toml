@@ -161,14 +161,15 @@ mode = "record"
 link = "repos"
 path = "/home/clangy/repos"
 
-# Writing skill from ~/repos, linked before the game is known: the prompt has every longer answer use it
+# Writing skill from ~/repos, linked before the game is known: the prompt has every longer answer use it.
+# The SE1 and SE2 skills below are clones in ~/repos too, pulled daily by ~/repos/clone-or-pull.
 [[mounts]]
 link = "knowledge/humanizer"
 path = "/home/clangy/repos/blader/humanizer"
 
 [[knowledge.se1]]
 link = "knowledge/skills"
-path = "/home/clangy/skills/skills"
+path = "/home/clangy/repos/CometWorks/skills/skills"
 
 [[knowledge.se1]]
 link = "knowledge/books"
@@ -180,7 +181,7 @@ path = "/home/clangy/.se-dev"
 
 [[knowledge.se2]]
 link = "knowledge/skills"
-path = "/home/clangy/skills2/skills"
+path = "/home/clangy/repos/CometWorks/skills2/skills"
 
 [[knowledge.se2]]
 link = "knowledge/books"

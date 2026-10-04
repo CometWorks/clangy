@@ -30,8 +30,12 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 │   ├── messages.sqlite      message cache
 │   ├── python/<hash>/       the sandboxes' Python environment
 │   └── check/               scratch folders of `clangy check`
-├── repos/                   reference repositories, mounted as repos/; clone-or-pull updates them daily
-├── skills/, skills2/        SE1 and SE2 skills, used in place
+├── repos/                   git clones, mounted as repos/
+│   ├── clone-or-pull        clones and pulls them daily, then rebuilds the skills' venvs
+│   ├── CometWorks/skills/   SE1 skills, linked as knowledge/skills
+│   ├── CometWorks/skills2/  SE2 skills, linked as knowledge/skills
+│   ├── blader/humanizer/    writing skill, linked as knowledge/humanizer
+│   └── <owner>/<repo>/      ecosystem and plugin repositories
 ├── se-dev-books/, se2-dev-books/
 ├── .se-dev/, .se2-dev/      data the skills expect in the home folder
 ├── .pi/agent/bin/pi         pi, from its own installer
@@ -127,9 +131,9 @@ cd ~/clangy && PATH=~/.pi/agent/bin:~/.local/share/pi-node/current/bin:$PATH ~/.
 
 ## Knowledge
 
-The prepared folders are used in place, see `[[knowledge.*]]` in `~/clangy.toml`. Git sources (`url`) would be mirrored by `clangy sync-knowledge`, run daily by a timer or cron job; the nas uses none.
+The knowledge sources are folders used in place, see `[[knowledge.*]]` in `~/clangy.toml`. The skills are the clones `~/repos/CometWorks/skills` and `~/repos/CometWorks/skills2`, which `~/repos/clone-or-pull` pulls daily with the other repositories. The books and the prepared data (`~/.se-dev`, `~/.se2-dev`) are plain folders. Git sources (`url`) would be mirrored by `clangy sync-knowledge`, run daily by a timer or cron job; the nas uses none.
 
-The code skills run their scripts with `uv run` from their own `.venv`. In the sandbox the skills are read-only and offline, so `sandbox.env` makes uv use the venvs as they are (`UV_NO_SYNC`, `UV_OFFLINE`), and the sandbox may read uv's Python installs (the SE1 skills pin Python 3.11). After copying new skills, build their venvs once as `clangy`, outside the sandbox: run any of their `uv run` commands, or `uv sync --frozen` in each skill folder. Venvs copied from another machine don't work, they point to that machine's Python. Searches work from the prepared indexes; preparing, indexing, downloading and the mod and script listings (which need the installed game) don't work in the sandbox.
+The code skills run their scripts with `uv run` from their own `.venv`. In the sandbox the skills are read-only and offline, so `sandbox.env` makes uv use the venvs as they are (`UV_NO_SYNC`, `UV_OFFLINE`), and the sandbox may read uv's Python installs (the SE1 skills pin Python 3.11). `~/repos/clone-or-pull` builds the venvs after every pull, as `clangy` and outside the sandbox, with `uv sync --frozen` in each skill folder that has a `pyproject.toml`. After moving a skills clone, delete its `.venv` folders first: a venv holds absolute paths, and `uv sync` doesn't rewrite them. Venvs copied from another machine don't work, they point to that machine's Python. Searches work from the prepared indexes; preparing, indexing, downloading and the mod and script listings (which need the installed game) don't work in the sandbox.
 
 The humanizer skill comes from `~/repos/blader/humanizer`, which `~/repos/clone-or-pull` keeps up to date. It is a `[[mounts]]` entry linked as `knowledge/humanizer`, so it is there before the game is known; the system prompt tells Clangy to read it for any answer longer than a sentence.
 
