@@ -40,7 +40,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 - A mention in a thread Clangy doesn't know yet (started before it ran, or by someone else in a text channel) starts a conversation in that thread, with the whole thread as context, read from Discord. A thread is one conversation, and its first post is often the request itself.
 - Without context Clangy doesn't answer: if the history can't be read, it logs an error and stays silent.
 - Nothing is answered after the fact: messages posted while Clangy was down are context for later mentions, never triggers. After every gateway (re)connect, the first message in a known thread first reads from Discord what was posted there since the newest message Clangy has, and queues it ahead of that message.
-- `record` channels also append every message to `store/records/<thread>.md`, without inference, so other conversations can find requests later.
+- `record` channels also append every message to `store/records/<thread>.md`, without inference, so other conversations can find requests later. A record expires `retention_days` after its last message (see Retention).
 
 ### Context and the message cache
 
@@ -174,7 +174,7 @@ Sent: the agent writes files in its work folder (by convention `out/`) and calls
 - keeps an answer within Discord's 10 attachments and `answer_max_bytes` in total;
 - stages the files in `files/outbox/`. If the run succeeds they move to `files/sent/<run number>/` and go out with the last part of the answer. If it fails they are dropped and can be sent again.
 
-`files/` is outside the sandbox's writable area, so everything received and sent stays even if the agent deletes its own copies. Tickets point at it with a `files:` frontmatter entry.
+`files/` is outside the sandbox's writable area, so everything received and sent stays even if the agent deletes its own copies, until the conversation expires (see Retention). Tickets point at it with a `files:` frontmatter entry.
 
 ## Store
 
