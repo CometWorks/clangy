@@ -12,8 +12,9 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `attachment_max_bytes` | 25 MiB | Larger attachments aren't downloaded; the agent gets a note instead. |
 | `answer_max_bytes` | 10 MiB | Total size of the files attached to one answer. Keep it within the server's upload limit. Each file is limited to 5 MB regardless. |
 | `progress_interval` | `60` | How often the progress message is checked; it's edited only when its text changes. |
-| `health_interval` | `30` | How often to check backends that lost conversations. |
-| `max_retries` | `3` | Automatic retries after a backend loss. |
+| `health_interval` | `30` | How often to check failed llama.cpp backends and retry the conversations waiting for a backend. |
+| `max_retries` | `3` | Automatic retries after a backend failure, counted from the last mention. |
+| `switch_margin` | `60` | A conversation moves to another backend only if that one answers sooner by this much, even after reading the whole conversation again. See design.md, Backends. |
 | `secret_markers` | book names, `knowledge/books` | Answers containing any of these (case-insensitive) are withheld. |
 
 ## `[sandbox]`
@@ -31,17 +32,35 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 
 | Key | Default | Meaning |
 |---|---|---|
-| `name` | required | Unique name. Conversations are pinned to it, so don't rename a backend with live conversations. |
+| `name` | required | Unique name. Conversations remember the backend of their last run by name; after a rename they are placed again like new ones. |
 | `url` | required | OpenAI compatible base URL including `/v1`. |
 | `model` | required | Model id sent to the backend. |
-| `api_key_env` | none | Environment variable with the API key. The key never enters the sandbox. |
+| `api_key` | none | The API key. Keep the config readable only by the bot's user. |
+| `api_key_env` | none | Environment variable with the API key, used when `api_key` is unset. The key never enters the sandbox. |
 | `parallel` | `1` | Runs at once. For llama.cpp, match the server's `--parallel` (slots). |
-| `kind` | `openai` | `llamacpp` enables slot pinning with `id_slot`. |
+| `kind` | `openai` | `llamacpp` enables slot pinning with `id_slot`, and a failed server gets runs again once its health check passes. Other kinds come back after `cooldown`. |
 | `slot_save` | `false` | llama.cpp: save and restore slot KV caches when conversations swap slots. Needs `--slot-save-path` on the server. |
 | `context_window`, `max_tokens` | `131072`, `4096` | Passed to pi. |
 | `thinking` | `off` | pi thinking level: `off`, `minimal`, `low`, `medium`, `high`. |
 | `compat` | `{}` | pi `compat` options for the model, e.g. `thinkingFormat = "qwen-chat-template"`. See pi's `docs/models.md`. |
-| `prompt_tps`, `gen_tps` | `300`, `40` | Starting speeds for the ETA. Measured speeds replace them. |
+| `prompt_tps`, `gen_tps` | `300`, `40` | Starting speeds for the ETA. Measured speeds replace them (llama.cpp reports them; cloud APIs don't, so their values stay). |
+| `extra_body` | `{}` | Merged into every chat completion request, after `model`. Carries OpenRouter's `models`, `reasoning` and `provider`. |
+| `first_byte_timeout` | none | A request fails if no data arrives for this long. Only for cloud APIs: llama.cpp sends nothing while it reads a long prompt. Keep-alive comments don't count as data. |
+| `stall_timeout` | none | A request fails if its stream stops for this long after the first data. |
+| `cooldown` | `60` | Kinds other than `llamacpp`: how long a failed backend gets no runs, longer if it sent `Retry-After`. |
+
+A request fails on a connection error, HTTP 408, 429 or 5xx, an error inside the stream (an event with `error`, or `finish_reason` `error`), or one of the timeouts. The run is then repeated on another backend right away, see design.md, Backends.
+
+### OpenRouter free models
+
+`config.example.toml` has a commented `openrouter-free` backend. Notes:
+
+- Free models allow 20 requests a minute and 1000 a day per account. A run makes roughly 7 to 11 requests, hence `parallel = 2`. `GET https://openrouter.ai/api/v1/key` reports the day's use in `free_model_daily_requests`.
+- `extra_body.models` lists up to 3 models (more is a 400 error). OpenRouter tries them in order within one request, so a rate-limited model is answered by the next. An invalid model id fails every request. The model that answered goes into the metrics.
+- Free models are often rate limited upstream (429). `google/gemma-4-31b-it:free` was every time when tested, so it's last.
+- `reasoning = { enabled = false }` turns reasoning off whichever model answers. Use it instead of `compat.thinkingFormat`, which only fits one model family. `reasoning = { effort = "low" }` turns it back on.
+- `nvidia/nemotron-3-super-120b-a12b:free` works only while the account allows free-model providers to use the prompts for training. With `provider = { data_collection = "deny" }` it returns 404. Everything sent to free models may be logged and trained on; that includes the support threads and the attachments the agent reads.
+- The key goes into `api_key` in the config (the nas: `~/clangy.toml`, mode 600) or into the variable named by `api_key_env`.
 
 ## `[[channels]]`
 

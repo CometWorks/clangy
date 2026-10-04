@@ -22,7 +22,7 @@ def test_summary(tmp_path):
     (folder / "metrics.jsonl").write_text("".join(json.dumps(r) + "\n" for r in runs))
     summary = summarize(load(tmp_path))
     assert "Runs: 3, answered 2, timed out 1, backend lost 0" in summary
-    assert "Time to answer: median 40.0 s" in summary
+    assert "Time to answer: median 40.0 s, p90 48.0 s, max 50.0 s" in summary, "p90 stays within the data"
     assert "Prompt tokens: 2000, cached 1600 (80%)" in summary
     assert "Prompt speed: median 340.0 tok/s, p90 340.0 tok/s" in summary
     assert "Generation speed: median 60.0 tok/s, p90 60.0 tok/s" in summary

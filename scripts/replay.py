@@ -68,19 +68,24 @@ async def model_id(url: str) -> str:
 
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--url", required=True, help="OpenAI compatible base URL with /v1")
+    parser.add_argument("--url", help="OpenAI compatible base URL with /v1 of a llama.cpp server")
+    parser.add_argument("--config", type=Path, help="take the backends from this config file instead")
+    parser.add_argument("--backend", help="with --config: use only this backend")
     parser.add_argument("--data", type=Path, required=True, help="scratch data folder, conversations are reset")
     parser.add_argument("--thinking", default="off")
     parser.add_argument("--skills", type=Path, help="local clone of CometWorks/skills")
     parser.add_argument("--books", type=Path, help="local clone of se-dev-books")
     parser.add_argument("--info-log", type=Path, help="an info.log to attach in the last turn")
     args = parser.parse_args()
+    if not args.url and not args.config:
+        parser.error("--url or --config is required")
 
     sources = [(args.skills, "knowledge/skills"), (args.books, "knowledge/books")]
     repos = [KnowledgeSource(url=str(path), link=link) for path, link in sources if path]
-    config = Config(
-        data_dir=args.data,
-        backends=[
+    if args.config:
+        backends = [b for b in Config.load(args.config).backends if args.backend in (None, b.name)]
+    else:
+        backends = [
             BackendConfig(
                 name="replay",
                 url=args.url,
@@ -89,7 +94,10 @@ async def main() -> None:
                 thinking=args.thinking,
                 compat={"thinkingFormat": "qwen-chat-template"},
             )
-        ],
+        ]
+    config = Config(
+        data_dir=args.data,
+        backends=backends,
         channels=[ChannelConfig(id=FORUM, mode="support", initial_response=True)],
         sandbox=SandboxConfig(firejail=False, path=f"{Path(shutil.which('pi') or 'pi').parent}:/usr/bin:/bin"),
         knowledge={"se1": repos} if repos else {},
@@ -118,7 +126,8 @@ async def main() -> None:
     print("\n" + summarize(load(args.data)))
     for line in (args.data / "conversations" / str(THREAD) / "metrics.jsonl").read_text().splitlines():
         record = json.loads(line)
-        keys = ("run", "ok", "total_seconds", "predicted_seconds", "steps", "prompt_tokens", "cached_tokens")
+        keys = ("run", "ok", "backend", "answered_by", "backend_switch", "total_seconds", "predicted_seconds", "steps")
+        keys += ("prompt_tokens", "cached_tokens", "completion_tokens")
         print({k: record.get(k) for k in keys})
 
 

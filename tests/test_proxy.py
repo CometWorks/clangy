@@ -121,3 +121,82 @@ async def test_relay_closes_when_the_proxy_is_down(tmp_path, squid):
     await squid.stop()
     async with TcpRelay(tmp_path / "proxy.sock", f"127.0.0.1:{squid.port}"):
         assert await connect_via(tmp_path / "proxy.sock", "pypi.org") == b""
+
+
+async def chat_once(backend_config: BackendConfig, tmp_path, requests: int = 1) -> tuple[ProxyRun, list]:
+    replies = []
+    async with aiohttp.ClientSession() as http:
+        run = ProxyRun(backend=Backend(backend_config), session=http, tools=tools)
+        async with HostServer(run, tmp_path / "host.sock"):
+            for _ in range(requests):
+                replies.append(await post(tmp_path / "host.sock", "/v1/chat/completions", {"messages": []}))
+    return run, replies
+
+
+def cloud(url: str, **kwargs) -> BackendConfig:
+    return BackendConfig(name="cloud", url=url, model="a/model:free", **kwargs)
+
+
+async def test_extra_body_and_key_from_config_reach_the_backend(backend, tmp_path):
+    extra = {"models": ["a/model:free", "b/model:free"], "reasoning": {"enabled": False}}
+    backend.answering_model = "b/model:free"
+    run, _ = await chat_once(cloud(backend.url, api_key="sk-test", extra_body=extra), tmp_path)
+    request = backend.requests[0]
+    assert request["model"] == "a/model:free" and request["models"] == extra["models"]
+    assert request["reasoning"] == {"enabled": False}
+    assert backend.headers[0]["Authorization"] == "Bearer sk-test"
+    assert run.stats.per_request[0]["model"] == "b/model:free", "the model that answered"
+
+
+async def test_rate_limit_is_a_backend_failure(backend, tmp_path):
+    backend.status = 429
+    run, [(status, _)] = await chat_once(cloud(backend.url), tmp_path)
+    assert status == 429 and run.stats.backend_failed and run.stats.retry_after is None
+    assert run.stats.per_request[0]["error"] == "HTTP 429"
+
+
+async def test_retry_after_is_kept(backend, tmp_path):
+    backend.status, backend.retry_after = 429, "120"
+    run, _ = await chat_once(cloud(backend.url), tmp_path)
+    assert run.stats.retry_after == 120.0
+
+
+async def test_no_first_data_in_time_fails(backend, tmp_path):
+    backend.stall_first = 1.0
+    run, [(status, _)] = await chat_once(cloud(backend.url, first_byte_timeout=0.2), tmp_path)
+    assert status == 502 and run.stats.backend_failed
+    assert "TimeoutError" in run.stats.per_request[0]["error"]
+
+
+async def test_keep_alive_comments_are_no_first_data(backend, tmp_path):
+    backend.stall_first, backend.keepalive = 1.0, True
+    run, [(status, body)] = await chat_once(cloud(backend.url, first_byte_timeout=0.3), tmp_path)
+    assert run.stats.backend_failed
+    assert '"error"' in body, "pi gets an error event, not a cut-off stream"
+
+
+async def test_slow_first_data_is_fine_without_timeout(backend, tmp_path):
+    backend.stall_first = 0.3
+    run, [(status, body)] = await chat_once(cloud(backend.url, stall_timeout=0.1), tmp_path)
+    assert status == 200 and "Hello from the fake backend." in body and not run.stats.backend_failed
+
+
+async def test_stalled_stream_fails(backend, tmp_path):
+    backend.stall_mid = 1.0
+    run, [(status, body)] = await chat_once(cloud(backend.url, stall_timeout=0.2), tmp_path)
+    assert status == 200 and run.stats.backend_failed
+    assert body.rstrip().endswith('"}}'), "ends with the error event"
+
+
+async def test_error_inside_the_stream_fails(backend, tmp_path):
+    backend.stream_error = True
+    run, [(status, _)] = await chat_once(cloud(backend.url), tmp_path)
+    assert status == 200 and run.stats.backend_failed
+    assert "Provider returned error" in run.stats.per_request[0]["error"]
+
+
+async def test_no_more_requests_after_a_failure(backend, tmp_path):
+    backend.status = 429
+    run, replies = await chat_once(cloud(backend.url), tmp_path, requests=2)
+    assert [status for status, _ in replies] == [429, 502]
+    assert len(backend.requests) == 1

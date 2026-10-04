@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 
@@ -8,7 +9,7 @@ import pytest
 
 from clangy import text
 from clangy.config import BackendConfig, ChannelConfig, Config, KnowledgeSource
-from clangy.core import Attachment, Clangy, IncomingMessage
+from clangy.core import Attachment, Clangy, Conversation, IncomingMessage
 from clangy.proxy import short_path
 from clangy.runner import RunResult, RunSpec
 
@@ -83,7 +84,7 @@ class FakeAgent:
 def config(tmp_path, backend) -> Config:
     return Config(
         data_dir=tmp_path,
-        backends=[BackendConfig(name="local", url=backend.url, model="m")],
+        backends=[BackendConfig(name="local", url=backend.url, model="m", kind="llamacpp")],
         channels=[
             ChannelConfig(id=SUPPORT, mode="support", initial_response=True),
             ChannelConfig(id=QUIET_FORUM, mode="support"),
@@ -482,15 +483,6 @@ async def test_record_mode_stores_thread(bot, chat, config):
     assert chat.messages == {}
 
 
-async def test_backends_are_assigned_round_robin_and_pinned(config, chat, backend):
-    config.backends.append(BackendConfig(name="second", url=backend.url, model="m"))
-    bot = Clangy(config, chat, run_agent=FakeAgent())
-    for thread in (1, 2, 3):
-        await bot.on_message(forum_post(QUIET_FORUM, thread, "x"))
-    assert [bot.conversations[t].backend for t in (1, 2, 3)] == ["local", "second", "local"]
-    await bot.close()
-
-
 async def test_state_survives_restart_without_catch_up(config, chat):
     first = Clangy(config, chat, run_agent=FakeAgent())
     await first.on_message(forum_post(QUIET_FORUM, 1019, "Hello"))
@@ -765,3 +757,95 @@ async def test_reference_only_for_the_first_run(bot, chat):
     await bot.on_message(message(612, "@Clangy it crashes on load", parent_id=MENTION, mentions_bot=True))
     await bot.wait_idle()
     assert "for reference" not in bot.agent.prompts[1], "messages in Clangy's thread are the conversation"
+
+
+@pytest.fixture
+async def duo(config, chat, backend2):
+    """A llama.cpp server (local) and a cloud API (cloud)."""
+    config.backends.append(BackendConfig(name="cloud", url=backend2.url, model="c"))
+    agent = FakeAgent()
+    clangy = Clangy(config, chat, run_agent=agent)
+    clangy.agent = agent  # type: ignore[attr-defined]
+    yield clangy
+    await clangy.close()
+
+
+def metrics(bot: Clangy, thread: int) -> list[dict]:
+    return [json.loads(line) for line in (bot.conversation_dir(thread) / "metrics.jsonl").read_text().splitlines()]
+
+
+async def test_failover_answers_right_away_from_another_backend(duo, chat, backend, backend2):
+    backend.status = 503
+    backend2.answering_model = "c-fallback"
+    await duo.on_message(forum_post(SUPPORT, 1100, "Crash"))
+    await duo.wait_idle()
+    conv = duo.conversations[1100]
+    assert conv.backend == "cloud" and conv.status == "idle" and conv.pending == []
+    [progress] = chat.in_channel(1100)
+    assert progress.current.startswith("Default answer.")
+    assert any("retry 1/3" in edit for edit in progress.edits)
+    first, second = metrics(duo, 1100)
+    assert first["backend"] == "local" and first["backend_switch"] == {"from": None, "reason": "new"}
+    assert first["backend_failed"] and not first["ok"]
+    assert second["backend"] == "cloud" and second["backend_switch"] == {"from": "local", "reason": "failure"}
+    assert second["answered_by"] == ["c-fallback"]
+    assert not duo.backends["local"].healthy
+
+
+async def test_failed_backends_wait_for_health_or_cooldown(duo, chat, backend, backend2):
+    backend.status = 503
+    await duo.on_message(forum_post(SUPPORT, 1101, "Crash"))
+    await duo.wait_idle()
+    assert duo.conversations[1101].backend == "cloud"
+
+    # The cloud is rate limited too and local hasn't passed a health check yet: wait
+    backend.status, backend2.status = 200, 429
+    await duo.on_message(message(1101, "@Clangy more", parent_id=SUPPORT, mentions_bot=True))
+    await duo.wait_idle()
+    conv = duo.conversations[1101]
+    assert conv.status == "backend_error" and "retry 0/3" in chat.in_channel(1101)[-1].current
+    assert len(backend.requests) == 1, "no request to local before its health check"
+
+    await duo.retry_failed()
+    await duo.wait_idle()
+    assert conv.status == "idle" and conv.backend == "local"
+    assert chat.in_channel(1101)[-1].current.startswith("Default answer.")
+    assert not duo.backends["cloud"].available(time.monotonic()), "cooling down"
+    assert metrics(duo, 1101)[-1]["backend_switch"] == {"from": "cloud", "reason": "failure"}
+
+
+async def test_new_conversations_go_where_the_answer_comes_first(duo):
+    release = asyncio.Event()
+    duo.agent.script = [blocked(release, answer("First."))]
+    await duo.on_message(forum_post(SUPPORT, 1110, "A"))
+    await asyncio.sleep(0.05)
+    await duo.on_message(forum_post(SUPPORT, 1111, "B"))
+    await asyncio.sleep(0.05)
+    release.set()
+    await duo.wait_idle()
+    assert duo.conversations[1110].backend == "local", "both idle: the first listed"
+    assert duo.conversations[1111].backend == "cloud", "local is busy"
+
+
+async def test_conversations_stay_unless_another_backend_is_clearly_faster(duo):
+    local, cloud = duo.backends["local"], duo.backends["cloud"]
+    new = Conversation(thread_id=1, channel_id=SUPPORT, guild_id=GUILD)
+    assert await duo._choose_backend(new, 3000) == (local, "new")
+    gone = Conversation(thread_id=2, channel_id=SUPPORT, guild_id=GUILD, backend="removed")
+    assert await duo._choose_backend(gone, 100) == (local, "new")
+
+    conv = Conversation(thread_id=3, channel_id=SUPPORT, guild_id=GUILD, backend="local", context_tokens=3000)
+    cloud.run_seconds = 10.0
+    assert await duo._choose_backend(conv, 100) == (local, None), "faster, but not by the margin"
+    await local.acquire("other")
+    assert await duo._choose_backend(conv, 100) == (cloud, "balance"), "local is busy"
+    conv.context_tokens = 100_000
+    assert await duo._choose_backend(conv, 100) == (local, None), "reading it all again takes longer"
+    await local.release("other")
+
+
+async def test_context_size_is_kept_for_the_switch_rule(duo, backend):
+    backend.prompt_tokens = 5000
+    await duo.on_message(forum_post(SUPPORT, 1120, "Hello"))
+    await duo.wait_idle()
+    assert duo.conversations[1120].context_tokens == 5007

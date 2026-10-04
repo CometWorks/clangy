@@ -12,7 +12,7 @@ import socket
 import time
 from datetime import datetime, timezone
 from collections.abc import Awaitable, Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -32,6 +32,8 @@ class ToolReply:
 
 
 ToolHandler = Callable[[str, dict], Awaitable[ToolReply | str]]
+FAILED_STATUSES = {408, 429}
+"""Besides 5xx: the backend timed out or is rate limited, another backend may answer."""
 MIN_SPEED_SAMPLE = 500
 """Prompt tokens a request must process to count as a speed sample."""
 
@@ -47,6 +49,8 @@ class RunStats:
     cached_tokens: int = 0
     completion_tokens: int = 0
     backend_failed: bool = False
+    retry_after: float | None = None
+    """Longest Retry-After the backend sent with a failure."""
     per_request: list[dict] = field(default_factory=list)
 
 
@@ -66,10 +70,25 @@ def _usage_from_event(event: dict, stats: dict) -> None:
         stats["prompt_tokens"] = usage.get("prompt_tokens", 0)
         stats["completion_tokens"] = usage.get("completion_tokens", 0)
         stats["cached_tokens"] = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+    if event.get("model"):
+        stats["model"] = event["model"]
     if timings:
         stats["timings"] = timings
         if "cache_n" in timings:
             stats["cached_tokens"] = timings["cache_n"]
+
+
+def _stream_error(event: dict) -> str | None:
+    """An error sent inside a stream that started with HTTP 200, as OpenRouter does when a provider fails."""
+    if error := event.get("error"):
+        return f"stream error: {json.dumps(error)[:500]}"
+    if any(choice.get("finish_reason") == "error" for choice in event.get("choices") or []):
+        return "stream error: finish_reason error"
+    return None
+
+
+def _sse(payload: dict) -> bytes:
+    return f"data: {json.dumps(payload)}\n\n".encode()
 
 
 def speed_samples(timings: dict) -> tuple[float | None, float | None]:
@@ -172,8 +191,12 @@ class HostServer:
     async def _chat(self, request: web.Request) -> web.StreamResponse:
         run = self.run
         backend = run.backend.config
+        if run.stats.backend_failed:
+            # The run's output is dropped anyway; don't spend more requests on a failed backend
+            return web.json_response({"error": {"message": "backend failed earlier in this run"}}, status=502)
         body = await request.json()
         body["model"] = backend.model
+        body.update(backend.extra_body)
         if run.slot is not None:
             body["id_slot"] = run.slot
             body["cache_prompt"] = True
@@ -185,30 +208,53 @@ class HostServer:
         stats: dict = {"time": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), "slot": run.slot}
         response: web.StreamResponse | None = None
         first_token = None
+        loop = asyncio.get_running_loop()
         try:
-            async with run.session.post(f"{backend.url}/chat/completions", json=body, headers=headers) as upstream:
-                stats["status"] = upstream.status
-                response = web.StreamResponse(status=upstream.status, headers={"Content-Type": upstream.content_type})
-                await response.prepare(request)
-                if upstream.status >= 500:
-                    run.stats.backend_failed = True
-                async for line in upstream.content:
-                    await response.write(line)
-                    if first_token is None:
-                        first_token = time.monotonic()
-                    if line.startswith(b"data: {"):
-                        _usage_from_event(json.loads(line[6:]), stats)
-                await response.write_eof()
+            async with asyncio.timeout(backend.first_byte_timeout) as limit:
+                async with run.session.post(f"{backend.url}/chat/completions", json=body, headers=headers) as upstream:
+                    stats["status"] = upstream.status
+                    response = web.StreamResponse(
+                        status=upstream.status, headers={"Content-Type": upstream.content_type}
+                    )
+                    await response.prepare(request)
+                    if upstream.status in FAILED_STATUSES or upstream.status >= 500:
+                        self._failed(stats, f"HTTP {upstream.status}", upstream.headers.get("Retry-After"))
+                    async for line in upstream.content:
+                        await response.write(line)
+                        # Only data counts: OpenRouter sends keep-alive comments while a stuck provider is silent
+                        if not line.startswith(b"data: {"):
+                            continue
+                        if first_token is None:
+                            first_token = time.monotonic()
+                        stall = backend.stall_timeout
+                        limit.reschedule(loop.time() + stall if stall else None)
+                        event = json.loads(line[6:])
+                        _usage_from_event(event, stats)
+                        if error := _stream_error(event):
+                            self._failed(stats, error)
+                    await response.write_eof()
         except (aiohttp.ClientError, TimeoutError) as e:
             log.warning("Backend %s failed: %r", backend.name, e)
-            run.stats.backend_failed = True
-            stats["error"] = repr(e)
+            self._failed(stats, repr(e))
             self._record(stats, started, first_token)
             if response is None:
-                return web.json_response({"error": {"message": f"backend unreachable: {e}"}}, status=502)
+                return web.json_response({"error": {"message": f"backend unreachable: {e!r}"}}, status=502)
+            with suppress(ConnectionError):
+                # Ends pi's turn with an error instead of a cut-off answer it would take as complete
+                await response.write(_sse({"error": {"message": f"backend failed: {stats['error']}"}}))
             return response
         self._record(stats, started, first_token)
         return response
+
+    def _failed(self, stats: dict, error: str, retry_after: str | None = None) -> None:
+        self.run.stats.backend_failed = True
+        stats["error"] = error
+        try:
+            seconds = float(retry_after) if retry_after else None
+        except ValueError:
+            seconds = None
+        if seconds is not None:
+            self.run.stats.retry_after = max(self.run.stats.retry_after or 0.0, seconds)
 
     def _record(self, stats: dict, started: float, first_token: float | None) -> None:
         s = self.run.stats

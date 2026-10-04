@@ -18,7 +18,7 @@ The sandbox may read pi's `bin` and `install` folders and its Node.js, but not t
 ## Requirements
 
 - firejail (`sudo apt install firejail`). Without a working sandbox `clangy run` refuses to start, with exit status 78, which the unit doesn't restart on.
-- The backends reachable from the host (`polaris:8080`).
+- The backends reachable from the host (`polaris:8080`, and `openrouter.ai` if the OpenRouter backend is enabled).
 - Optionally squid, see Proxy.
 
 ## Proxy
@@ -41,7 +41,7 @@ It rsyncs the working copy (without `.git`, `.venv`, `data/` and a local `config
 
 ## Run
 
-Set `discord_token` in `~/clangy.toml` and the channels to serve, then on the host:
+Set `discord_token` in `~/clangy.toml` and the channels to serve. For the OpenRouter backend, uncomment it in `~/clangy.toml` and put the key into its `api_key`; the unit has no environment file. Then on the host:
 
 ```bash
 systemctl --user start clangy

@@ -13,6 +13,8 @@ class BackendConfig(BaseModel):
     url: str
     """OpenAI compatible base URL, including the `/v1` suffix."""
     model: str
+    api_key: str | None = None
+    """Used when set, otherwise the api_key_env variable. Keep the file readable only by the bot."""
     api_key_env: str | None = None
     parallel: int = 1
     kind: Literal["openai", "llamacpp"] = "openai"
@@ -24,6 +26,14 @@ class BackendConfig(BaseModel):
     compat: dict[str, Any] = Field(default_factory=dict)
     prompt_tps: float = 300.0
     gen_tps: float = 40.0
+    extra_body: dict[str, Any] = Field(default_factory=dict)
+    """Merged into every chat completion request, e.g. OpenRouter's `models`, `reasoning` and `provider`."""
+    first_byte_timeout: float | None = None
+    """A request fails if no data arrives for this long. Not for llama.cpp, it's silent while reading a prompt."""
+    stall_timeout: float | None = None
+    """A request fails if its stream stops for this long after the first data."""
+    cooldown: float = 60.0
+    """openai kind: a failed backend gets new runs again after this long, or after the Retry-After it sent."""
 
     @property
     def root_url(self) -> str:
@@ -89,6 +99,8 @@ class Config(BaseModel):
     progress_interval: float = 60.0
     health_interval: float = 30.0
     max_retries: int = 3
+    switch_margin: float = 60.0
+    """A conversation moves to another backend only if that's faster by this much, after reading the whole prompt."""
     secret_markers: list[str] = Field(default_factory=lambda: ["se-dev-books", "se2-dev-books", "knowledge/books"])
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     knowledge: dict[Game, list[KnowledgeSource]] = Field(default_factory=dict)

@@ -132,3 +132,66 @@ async def test_pi_grep_searches_linked_knowledge(tmp_path, backend, chat):
     first = json.dumps(backend.requests[0]["messages"][-1])
     assert "se-dev-game-code: Game code (knowledge/skills/se-dev-game-code/SKILL.md)" in first
     assert "MyWolfLogic.cs" in json.dumps(backend.requests[1]["messages"][-1]), "grep follows the knowledge link"
+
+
+async def test_session_moves_to_another_backend(tmp_path, backend, backend2, chat):
+    assert PI is not None
+    config = Config(
+        data_dir=tmp_path,
+        backends=[
+            BackendConfig(name="local", url=backend.url, model="m", kind="llamacpp"),
+            BackendConfig(name="cloud", url=backend2.url, model="c"),
+        ],
+        channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True)],
+        sandbox=SandboxConfig(firejail=False, path=os.environ["PATH"]),
+        run_deadline=60,
+    )
+    backend.replies = [
+        Reply(reasoning="Let me look.", tool="bash", arguments={"command": "echo hi"}),
+        Reply(reasoning="It printed hi.", text="First answer."),
+    ]
+    backend2.replies = [Reply("Second answer.")]
+    bot = Clangy(config, chat)
+    await bot.on_message(forum_post(SUPPORT, 2004, "My game crashes"))
+    await bot.wait_idle()
+    backend.status = 503
+    await bot.on_message(message(2004, "@Clangy thanks", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
+    await bot.close()
+    assert chat.in_channel(2004)[1].current.startswith("Second answer.")
+    moved = backend2.requests[0]["messages"]
+    # The cloud gets the session as it was, reasoning still marked as such rather than turned into answer text
+    assert json.dumps(moved[: len(backend.requests[1]["messages"])]) == json.dumps(backend.requests[1]["messages"])
+    assistant = [m for m in moved if m["role"] == "assistant"]
+    assert [m.get("reasoning_content") for m in assistant] == ["Let me look.", "It printed hi."]
+    assert "Let me look." not in json.dumps([m.get("content") for m in assistant])
+
+
+@pytest.mark.parametrize("failure", ["stall_mid", "stream_error", "rate_limit"])
+async def test_pi_fails_over_when_the_stream_breaks(tmp_path, backend, backend2, chat, failure):
+    assert PI is not None
+    config = Config(
+        data_dir=tmp_path,
+        backends=[
+            BackendConfig(name="cloud", url=backend.url, model="c", stall_timeout=0.5),
+            BackendConfig(name="local", url=backend2.url, model="m", kind="llamacpp"),
+        ],
+        channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True)],
+        sandbox=SandboxConfig(firejail=False, path=os.environ["PATH"]),
+        run_deadline=60,
+    )
+    if failure == "stall_mid":
+        backend.stall_mid = 5.0
+    elif failure == "stream_error":
+        backend.stream_error = True
+    else:
+        backend.status = 429
+    backend.replies = [Reply("Cut off answer that must not be posted.")]
+    backend2.replies = [Reply("Answer from the other backend.")]
+    bot = Clangy(config, chat)
+    await bot.on_message(forum_post(SUPPORT, 2005, "My game crashes"))
+    await bot.wait_idle()
+    await bot.close()
+    assert len(backend.requests) == 1
+    assert chat.in_channel(2005)[0].current.startswith("Answer from the other backend.")
+    assert bot.conversations[2005].backend == "local"

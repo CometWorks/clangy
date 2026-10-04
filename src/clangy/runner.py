@@ -21,6 +21,9 @@ SANDBOX_BIN = PACKAGE_DIR / "sandbox-bin"
 HOST_TOOLS = ["set_game", "attach_files", "ticket_create", "ticket_add_report", "note_create", "plan_create"]
 """Registered by pi/clangy.ts. pi 1.x applies --tools to extension tools too, so they must be listed."""
 TOOLS = ",".join(["read", "grep", "find", "ls", "bash", *HOST_TOOLS])
+PI_MODEL = "clangy"
+"""The model id pi sees on every backend; the host sets the real one. pi turns the reasoning of another model's
+turns into plain text, which would happen whenever a conversation moves between backends."""
 
 TOOL_STATES = {
     "bash": "analyzing",
@@ -87,7 +90,7 @@ def write_pi_config(paths: RunPaths, backend: BackendConfig, port: int) -> None:
     """Writes pi's model and settings files, pointing inference at the host bridge."""
     paths.agent_dir.mkdir(parents=True, exist_ok=True)
     model = {
-        "id": backend.model,
+        "id": PI_MODEL,
         "reasoning": backend.thinking != "off",
         "contextWindow": backend.context_window,
         "maxTokens": backend.max_tokens,
@@ -114,7 +117,7 @@ def pi_arguments(spec: RunSpec) -> list[str]:
         "--no-skills", "--no-prompt-templates", "--no-themes", "--no-extensions",
         "--extension", str(EXTENSION),
         "--tools", TOOLS,
-        "--model", f"clangy/{spec.backend.model}",
+        "--model", f"clangy/{PI_MODEL}",
         "--thinking", spec.backend.thinking,
         "--system-prompt", str(spec.paths.system_prompt),
         spec.prompt,

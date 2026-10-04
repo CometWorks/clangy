@@ -8,8 +8,8 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 |---|---|
 | `discord_bot.py` | discord.py client. Converts gateway messages to `IncomingMessage` and implements the `Chat` protocol (send, edit, create thread, download). The only module that knows about Discord. |
 | `core.py` | Channel rules, conversations, queued messages, one run per conversation, progress messages, retries, host tools, persistence. |
-| `backend.py` | Per-backend run queue (`parallel` runs at once), queue positions, measured prompt and generation speeds, health checks, llama.cpp slot pinning and save/restore. |
-| `proxy.py` | Per-run HTTP server on a unix socket inside the work folder: forwards chat completions to the pinned backend and serves the host tools. |
+| `backend.py` | Per-backend run queue (`parallel` runs at once), queue positions, measured prompt and generation speeds, ETA, health checks and cooldowns, llama.cpp slot pinning and save/restore. |
+| `proxy.py` | Per-run HTTP server on a unix socket inside the work folder: forwards chat completions to the run's backend, detects backend failures, and serves the host tools. |
 | `runner.py` | Writes pi's config, builds the firejail command line, runs pi with a deadline and reads its JSON event stream. |
 | `store.py` | Tickets, notes, plans and records in Clangy's own store. |
 | `knowledge.py` | The daily sync of knowledge kept in git repositories. |
@@ -22,11 +22,11 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 ## A run
 
 1. A trigger (see below) posts a progress message right away and starts the conversation's worker. A trigger during a run sets a flag, and the worker runs again afterwards.
-2. The worker waits for a slot on the conversation's backend. The progress message shows the queue position and an ETA.
+2. The worker picks the backend (see Backends) and waits for a slot on it. The progress message shows the queue position and an ETA.
 3. The host snapshots the pi session file, refreshes the work folder links (`attachments`, `store`, `guide`, the game's knowledge), writes pi's `models.json` and `settings.json`, and opens the host socket.
 4. pi runs in firejail with `--mode json --print --session <file>`. The prompt is a `[host]` timestamp line, then every queued message as `Name: text` plus attachment notes.
 5. On success the queued messages are dropped, the answer replaces the progress message, and parts over 2000 characters go into follow-up messages. Every answer ends with the fixed mention reminder.
-6. On a timeout, backend loss or other failure the session file is restored from the snapshot, so partial output never reaches the next run, and the queued messages stay queued.
+6. On a timeout, backend failure or other failure the session file is restored from the snapshot, so partial output never reaches the next run, and the queued messages stay queued.
 
 ### When Clangy responds
 
@@ -71,7 +71,8 @@ A follow-up should cost only its new tokens. What keeps the prefix byte-identica
 - Tool definitions are static, and pi always gets the same `--tools` list.
 - Changing data (the time, the game version, attachment notes) goes into the user turn as `[host]` lines, never into the system prompt.
 - pi's own retries are off. Compaction stays at pi's default, which only triggers near the context limit.
-- A conversation is pinned to its backend for life. New conversations are assigned round-robin.
+- A conversation stays on the backend of its last run unless that one fails or is clearly slower, see Backends.
+- pi sees the same model id (`clangy`) on every backend, and the proxy sets the real one. pi turns the reasoning of another model's turns into plain text, so a different id per backend would change the session's earlier turns whenever a conversation moves.
 - On llama.cpp backends (`kind = "llamacpp"`) each running conversation is pinned to a server slot with `id_slot`. With `slot_save = true`, a conversation that loses its slot to another one gets its KV cache saved (`POST /slots/N?action=save`) and restored when it comes back. This needs `--slot-save-path` on the server, and every request to that server must go through Clangy.
 
 `tests/test_pi_integration.py` checks with the real pi that the system prompt matches the file and that each request extends the previous one byte for byte.
@@ -90,11 +91,23 @@ Every run's timing and token counts go into `metrics.jsonl`, see Metrics.
 
 The deadline (`run_deadline`) starts when the run leaves the queue. pi is killed when it passes.
 
-## Backend loss
+## Backends
 
-The proxy flags a run when the backend connection fails or the backend answers with a 5xx status. The run's output is dropped (session restored, messages kept) and the progress message turns into "retry 0/3". Every `health_interval` the host checks the backends of such conversations with `GET /v1/models`. Once one answers, its conversations run again, up to `max_retries` times, and the same message shows "retry N/3". After the last failure it asks the user to mention Clangy, and there are no more automatic retries. A mention resets the count.
+Every backend that works serves conversations. Switching is kept rare because a backend that hasn't seen a conversation has to read all of it: tens of thousands of tokens, a minute or more on polaris. OpenRouter caches prompts too (`cached_tokens` in its usage), so staying put pays off there as well.
 
-The conversations to retry come from the persisted state, so this also works across restarts.
+Before each run the host picks the backend:
+
+- New conversation, or its backend was removed from the config: the available backend with the lowest ETA (see Progress and ETA). Ties go to the backend listed first, so the local GPU wins while it's idle.
+- Existing conversation whose backend is available: it stays, unless another backend's ETA for the whole conversation (the last answer's prompt and completion tokens plus the new text) plus `switch_margin` beats the current backend's ETA for the new text alone. In practice it moves when its backend is busy with other answers and another one is idle.
+- Its backend failed: the available backend with the lowest ETA for the whole conversation.
+
+The proxy flags a backend failure on a connection error, HTTP 408, 429 or 5xx, an error event inside a stream that started with HTTP 200 (OpenRouter does this when the provider fails), no data within `first_byte_timeout`, or a stream that stops for `stall_timeout`. After a failure it refuses the run's further requests, and on a broken stream it sends pi an error event, so pi ends the turn with an error instead of taking a cut-off answer as complete. The run's output is dropped (session restored, messages kept).
+
+The failed backend is marked unavailable and the run starts again right away on another one, showing "retry 1/3". Only when no backend is available does the progress message say the backend was lost and wait. A llama.cpp server comes back when its health check (`GET /v1/models`, every `health_interval`, and right away when a run finds no backend) answers. Other kinds come back after `cooldown`, or the `Retry-After` they sent: OpenRouter's model list answers even while every free model is rate limited, so it proves nothing. Every `health_interval` the waiting conversations run again once any backend is available.
+
+Retries count up to `max_retries` from the last mention. After the last failure Clangy asks the user to mention it, and there are no more automatic retries. The conversations to retry come from the persisted state, so this also works across restarts.
+
+A llama.cpp slot owned by a conversation that moved away is simply taken over by the next one.
 
 A restart during a run turns that run's progress message into a failure note. The run isn't repeated.
 
@@ -138,13 +151,15 @@ Every run, answered or not, appends one JSON line to its conversation's `metrics
 
 | Field | Meaning |
 |---|---|
-| `time`, `thread_id`, `channel_id`, `game`, `backend`, `model`, `run` | When and where. `run` counts the conversation's answered runs. |
+| `time`, `thread_id`, `channel_id`, `game`, `backend`, `model`, `run` | When and where. `model` is the configured one; `run` counts the conversation's answered runs. |
+| `answered_by` | The models that actually answered the run's requests, from the stream's `model` field. With OpenRouter's `models` list these can differ from `model`, even within one run. |
+| `backend_switch` | Present when the run moved the conversation: `from` (null for a new conversation) and `reason` (`new`, `failure` or `balance`). |
 | `ok`, `timed_out`, `backend_failed`, `error` | Outcome. `error` holds pi's error or exit status. |
 | `answer_chars`, `tools`, `steps` | Answer length, the tools called in order, model turns. |
 | `predicted_seconds`, `queue_seconds`, `run_seconds`, `total_seconds` | The ETA at trigger time, the wait for the backend, the run itself, and trigger to answer. |
 | `prompt_estimate` | The prompt token estimate behind the ETA. |
 | `prompt_tokens`, `cached_tokens`, `completion_tokens` | Sums over the run's requests. |
-| `requests` | One entry per backend request: `time`, `slot`, `status`, `seconds`, `first_token_seconds`, `prompt_tokens`, `cached_tokens`, `completion_tokens`, the backend's raw `timings` (llama.cpp: `prompt_n`, `prompt_ms`, `prompt_per_second`, `predicted_n`, `predicted_per_second`, `cache_n`, ...), and `error` if it failed. |
+| `requests` | One entry per backend request: `time`, `slot`, `status`, `model`, `seconds`, `first_token_seconds`, `prompt_tokens`, `cached_tokens`, `completion_tokens`, the backend's raw `timings` (llama.cpp: `prompt_n`, `prompt_ms`, `prompt_per_second`, `predicted_n`, `predicted_per_second`, `cache_n`, ...), and `error` if it failed. |
 
 `prompt_tokens` is the whole prompt; `prompt_tokens - cached_tokens` is what the backend actually processed.
 

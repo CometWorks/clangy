@@ -17,6 +17,7 @@ def sse(payload: dict) -> bytes:
 @dataclass
 class Reply:
     text: str = ""
+    reasoning: str = ""
     tool: str | None = None
     arguments: dict = field(default_factory=dict)
 
@@ -30,6 +31,15 @@ class FakeBackend:
         self.headers: list[dict] = []
         self.slot_actions: list[tuple[int, str, str]] = []
         self.status = 200
+        self.retry_after: str | None = None
+        self.stall_first = 0.0
+        """Seconds before the first data, with keep-alive comments if `keepalive`."""
+        self.keepalive = False
+        self.stall_mid = 0.0
+        """Seconds of silence after the first chunk."""
+        self.stream_error = False
+        """Fails inside the stream after HTTP 200, like OpenRouter when a provider fails."""
+        self.answering_model: str | None = None
         self.prompt_tokens = 100
         self.cached_tokens = 80
         self.processed_tokens = 1000
@@ -69,11 +79,32 @@ class FakeBackend:
         self.requests.append(body)
         self.headers.append(dict(request.headers))
         if self.status != 200:
-            return web.json_response({"error": {"message": "unavailable"}}, status=self.status)
-        reply = self.replies.pop(0) if self.replies else Reply("Hello from the fake backend.")
+            headers = {"Retry-After": self.retry_after} if self.retry_after else None
+            return web.json_response(
+                {"error": {"code": self.status, "message": "unavailable"}}, status=self.status, headers=headers
+            )
         response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
-        await response.prepare(request)
-        chunk = {"id": "c", "object": "chat.completion.chunk", "created": 0, "model": body["model"]}
+        if self.keepalive:
+            await response.prepare(request)
+            for _ in range(int(self.stall_first / 0.05)):
+                await response.write(b": OPENROUTER PROCESSING\n\n")
+                await asyncio.sleep(0.05)
+        else:
+            await asyncio.sleep(self.stall_first)
+            await response.prepare(request)
+        chunk = {
+            "id": "c",
+            "object": "chat.completion.chunk",
+            "created": 0,
+            "model": self.answering_model or body["model"],
+        }
+        if self.stream_error:
+            error = {"code": 502, "message": "Provider returned error"}
+            await response.write(
+                sse({**chunk, "error": error, "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}]})
+            )
+            return response
+        reply = self.replies.pop(0) if self.replies else Reply("Hello from the fake backend.")
         if reply.tool:
             call = {"index": 0, "id": f"call_{len(self.requests)}", "type": "function"}
             call["function"] = {"name": reply.tool, "arguments": json.dumps(reply.arguments)}
@@ -82,7 +113,11 @@ class FakeBackend:
         else:
             delta = {"role": "assistant", "content": reply.text}
             finish = "stop"
+        if reply.reasoning:
+            thought = {"role": "assistant", "content": None, "reasoning_content": reply.reasoning}
+            await response.write(sse({**chunk, "choices": [{"index": 0, "delta": thought, "finish_reason": None}]}))
         await response.write(sse({**chunk, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}))
+        await asyncio.sleep(self.stall_mid)
         await response.write(sse({**chunk, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}))
         usage = {
             "prompt_tokens": self.prompt_tokens,

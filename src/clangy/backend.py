@@ -21,6 +21,7 @@ class Backend:
         self.gen_tps = config.gen_tps
         self.run_seconds = DEFAULT_RUN_SECONDS
         self.healthy = True
+        self._cooldown_until = 0.0
         self._waiting: list[str] = []
         self._running: set[str] = set()
         self._changed = asyncio.Condition()
@@ -34,7 +35,20 @@ class Backend:
 
     @property
     def api_key(self) -> str | None:
+        if self.config.api_key:
+            return self.config.api_key
         return os.environ.get(self.config.api_key_env) if self.config.api_key_env else None
+
+    def available(self, now: float) -> bool:
+        """Whether runs may use it. llama.cpp comes back with a passed health check, other kinds after a cooldown:
+        a cloud API's model list answers even while its models are rate limited."""
+        if not self.healthy and self.config.kind != "llamacpp" and now >= self._cooldown_until:
+            self.healthy = True
+        return self.healthy
+
+    def mark_failed(self, now: float, retry_after: float | None = None) -> None:
+        self.healthy = False
+        self._cooldown_until = now + max(self.config.cooldown, retry_after or 0.0)
 
     def ahead_of(self, conversation: str) -> int:
         """Runs that go before this conversation's: the running ones and those queued earlier."""

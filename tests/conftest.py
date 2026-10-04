@@ -26,6 +26,14 @@ async def backend():
 
 
 @pytest.fixture
+async def backend2():
+    fake = FakeBackend()
+    await fake.start()
+    yield fake
+    await fake.stop()
+
+
+@pytest.fixture
 async def squid():
     fake = FakeSquid({"pypi.org"})
     await fake.start()

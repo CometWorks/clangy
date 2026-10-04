@@ -8,6 +8,7 @@ answer_max_bytes = 10485760
 progress_interval = 60.0
 health_interval = 30.0
 max_retries = 3
+switch_margin = 60.0
 
 [sandbox]
 firejail = true
@@ -28,6 +29,26 @@ thinking = "low"
 compat = { thinkingFormat = "qwen-chat-template" }
 prompt_tps = 300.0
 gen_tps = 40.0
+
+# OpenRouter's free models as a second backend. The key goes into api_key (keep this file mode 600) or the
+# environment variable named by api_key_env. Free models: 20 requests a minute and 1000 a day per account.
+# [[backends]]
+# name = "openrouter-free"
+# url = "https://openrouter.ai/api/v1"
+# kind = "openai"
+# model = "qwen/qwen3.8-27b:free"
+# # api_key = "sk-or-..."   # or api_key_env = "OPENROUTER_API_KEY"
+# parallel = 2              # a run makes roughly 7-11 requests
+# context_window = 262144
+# max_tokens = 4096
+# thinking = "off"
+# prompt_tps = 2000.0
+# gen_tps = 60.0
+# first_byte_timeout = 60
+# stall_timeout = 60
+# cooldown = 60
+# # OpenRouter falls back within a request, to at most 3 models
+# extra_body = { models = ["qwen/qwen3.8-27b:free", "nvidia/nemotron-3-super-120b-a12b:free", "google/gemma-4-31b-it:free"], reasoning = { enabled = false } }
 
 # Support forum: answers new posts, then only when mentioned
 [[channels]]

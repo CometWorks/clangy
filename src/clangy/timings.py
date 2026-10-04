@@ -17,7 +17,7 @@ def load(data_dir: Path) -> list[dict]:
 def _spread(values: list[float], unit: str) -> str:
     if not values:
         return "-"
-    p90 = quantiles(values, n=10)[-1] if len(values) > 1 else values[0]
+    p90 = quantiles(values, n=10, method="inclusive")[-1] if len(values) > 1 else values[0]
     return f"median {median(values):.1f}{unit}, p90 {p90:.1f}{unit}, max {max(values):.1f}{unit}"
 
 

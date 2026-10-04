@@ -26,7 +26,7 @@ def test_firejail_command(tmp_path):
     # Secrets from the host environment never reach the sandbox
     assert not any(arg.startswith(("DISCORD", "CLANGY_TEST_KEY")) for arg in inner)
     assert inner[-1] == "[host] hi"
-    assert inner[inner.index("--model") + 1] == "clangy/qwen"
+    assert inner[inner.index("--model") + 1] == "clangy/clangy", "one model id on every backend"
 
 
 def test_unsandboxed_command(tmp_path):
@@ -40,7 +40,7 @@ def test_pi_config_points_at_the_bridge(tmp_path):
     provider = json.loads((paths.agent_dir / "models.json").read_text())["providers"]["clangy"]
     assert provider["baseUrl"] == "http://127.0.0.1:4321/v1"
     assert provider["compat"] == {"supportsDeveloperRole": False, "thinkingFormat": "qwen"}
-    assert provider["models"][0]["reasoning"] is True
+    assert provider["models"][0]["reasoning"] is True and provider["models"][0]["id"] == "clangy"
     settings = json.loads((paths.agent_dir / "settings.json").read_text())
     assert settings["retry"]["enabled"] is False
 

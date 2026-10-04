@@ -81,7 +81,10 @@ class Conversation(BaseModel):
     thread_id: int
     channel_id: int
     guild_id: int
-    backend: str
+    backend: str = ""
+    """The backend of the last run, its cache holds the conversation. Empty until the first run."""
+    context_tokens: int = 0
+    """Size of the conversation after its last answer, what another backend would have to read."""
     game: Game | None = None
     status: Status = "idle"
     pending: list[PendingMessage] = Field(default_factory=list)
@@ -171,7 +174,6 @@ class Clangy:
         self._first_answer: dict[int, asyncio.Task] = {}
         """Delayed first answers to new forum threads."""
         self._wake: dict[int, bool] = {}
-        self._next_backend = 0
         self._http: aiohttp.ClientSession | None = None
 
     @property
@@ -399,11 +401,7 @@ class Clangy:
         self.save(conv)
 
     def _new_conversation(self, thread_id: int, channel: ChannelConfig, guild_id: int) -> Conversation:
-        backend = self.config.backends[self._next_backend % len(self.config.backends)].name
-        self._next_backend += 1
-        conv = Conversation(
-            thread_id=thread_id, channel_id=channel.id, guild_id=guild_id, backend=backend, game=channel.game
-        )
+        conv = Conversation(thread_id=thread_id, channel_id=channel.id, guild_id=guild_id, game=channel.game)
         if channel.game:
             conv.host_notes.append(self._knowledge_note(channel.game))
         self.conversations[thread_id] = conv
@@ -461,18 +459,31 @@ class Clangy:
             await asyncio.gather(*running)
 
     async def _run(self, conv: Conversation) -> None:
-        backend = self.backends[conv.backend]
         progress = Progress(retry=conv.retries if conv.status == "backend_error" else 0)
-        conv.status = "queued"
         prompt = self._prompt(conv)
         first_run = not RunPaths(self._work_dir(conv)).session.exists()
         prompt_tokens = len(prompt) // 4 + (FIRST_RUN_TOKENS if first_run else 0)
+        backend, reason = await self._choose_backend(conv, prompt_tokens)
+        if backend is None:
+            conv.status = "backend_error"
+            await self._show(conv, text.backend_lost(conv.retries, self.config.max_retries))
+            self.save(conv)
+            return
+        timing: dict = {}
+        if reason:
+            log.info(
+                "Conversation %s moves from %s to %s: %s", conv.thread_id, conv.backend or "-", backend.name, reason
+            )
+            timing["backend_switch"] = {"from": conv.backend or None, "reason": reason}
+            prompt_tokens += conv.context_tokens
+            conv.backend = backend.name
+        conv.status = "queued"
         progress.eta = time.time() + backend.estimate(conv.key, prompt_tokens, ANSWER_TOKENS)
         progress.ahead = backend.ahead_of(conv.key)
-        timing = {"predicted_seconds": round(progress.eta - progress.started, 1), "prompt_estimate": prompt_tokens}
+        timing |= {"predicted_seconds": round(progress.eta - progress.started, 1), "prompt_estimate": prompt_tokens}
         shown = progress.render(self.config.max_retries)
         await self._show(conv, shown)
-        updater = asyncio.create_task(self._update_progress(conv, progress, shown))
+        updater = asyncio.create_task(self._update_progress(conv, backend, progress, shown))
         consumed = {m.id for m in conv.pending}
         self._in_run[conv.thread_id] = consumed
         delivered = list(conv.host_notes)
@@ -508,11 +519,42 @@ class Clangy:
         self._log_metrics(conv, result, stats, timing)
         del self._outboxes[conv.thread_id]
         del self._in_run[conv.thread_id]
-        await self._finish(conv, result, stats, consumed, delivered, outbox)
+        await self._finish(conv, backend, result, stats, consumed, delivered, outbox)
+
+    async def _choose_backend(self, conv: Conversation, new_tokens: int) -> tuple[Backend | None, str | None]:
+        """The backend for the next run, and why it isn't the conversation's current one.
+
+        A conversation stays on its backend, whose cache holds it, unless that failed or another backend is faster
+        by switch_margin even after reading the whole conversation. New ones go where the answer comes soonest;
+        ties go to the backend listed first.
+        """
+        now = time.monotonic()
+        available = [b for b in self.backends.values() if b.available(now)]
+        if not available:
+            # A llama.cpp server may be back already, e.g. when a mention comes before the next health check
+            for backend in self.backends.values():
+                if backend.config.kind == "llamacpp" and await backend.check_health(self.http):
+                    available.append(backend)
+        if not available:
+            return None, None
+        current = self.backends.get(conv.backend)
+        staying = current in available
+
+        def eta(backend: Backend) -> tuple[float, bool]:
+            if backend is current:
+                return backend.estimate(conv.key, new_tokens, ANSWER_TOKENS), False
+            margin = self.config.switch_margin if staying else 0.0
+            return backend.estimate(conv.key, conv.context_tokens + new_tokens, ANSWER_TOKENS) + margin, True
+
+        best = min(available, key=eta)
+        if best is current:
+            return best, None
+        return best, "new" if current is None else "balance" if staying else "failure"
 
     async def _finish(
         self,
         conv: Conversation,
+        backend: Backend,
         result: RunResult,
         stats: RunStats,
         consumed: set[int],
@@ -526,6 +568,8 @@ class Clangy:
             conv.status = "idle"
             conv.retries = 0
             conv.runs += 1
+            if last := next((r for r in reversed(stats.per_request) if r.get("prompt_tokens")), None):
+                conv.context_tokens = last["prompt_tokens"] + last.get("completion_tokens", 0)
             attachments = outbox.commit(self.files_dir(conv.thread_id) / "sent" / f"{conv.runs:04d}")
             conv.sent_files = sorted(outbox.sent)
             self.save(conv)
@@ -534,12 +578,18 @@ class Clangy:
         shutil.rmtree(outbox.staging, ignore_errors=True)
         self._restore_session(conv)
         if stats.backend_failed:
+            now = time.monotonic()
+            backend.mark_failed(now, stats.retry_after)
             if conv.retries >= self.config.max_retries:
                 conv.status = "failed"
                 message = text.backend_gave_up(bot)
             else:
                 conv.status = "backend_error"
                 message = text.backend_lost(conv.retries, self.config.max_retries)
+                if any(b.available(now) for b in self.backends.values()):
+                    # Another backend takes over right away, even though it has to read the whole conversation
+                    conv.retries += 1
+                    self.trigger(conv)
         else:
             log.warning("Run failed for conversation %s: %s", conv.thread_id, result.error or "timeout")
             conv.status = "idle"
@@ -765,8 +815,7 @@ class Clangy:
         for i, part in enumerate(parts[1:], start=2):
             await self.chat.send(conv.thread_id, part, files if i == len(parts) else None)
 
-    async def _update_progress(self, conv: Conversation, progress: Progress, shown: str) -> None:
-        backend = self.backends[conv.backend]
+    async def _update_progress(self, conv: Conversation, backend: Backend, progress: Progress, shown: str) -> None:
         while True:
             await asyncio.sleep(self.config.progress_interval)
             progress.ahead = backend.ahead_of(conv.key)
@@ -784,6 +833,7 @@ class Clangy:
             "game": conv.game,
             "backend": conv.backend,
             "model": self.backends[conv.backend].config.model,
+            "answered_by": sorted({r["model"] for r in stats.per_request if r.get("model")}),
             "run": conv.runs + 1,
             "ok": result.answer is not None,
             "timed_out": result.timed_out,
@@ -803,19 +853,23 @@ class Clangy:
     # Backend recovery
 
     async def monitor_backends(self) -> None:
-        """Retries conversations that lost their backend once it is reachable again."""
+        """Checks failed backends and retries the conversations waiting for one."""
         while True:
             await asyncio.sleep(self.config.health_interval)
             await self.retry_failed()
 
     async def retry_failed(self) -> None:
-        waiting = [c for c in self.conversations.values() if c.status == "backend_error"]
-        for name in {c.backend for c in waiting}:
-            if not await self.backends[name].check_health(self.http):
+        for backend in self.backends.values():
+            if not backend.healthy and backend.config.kind == "llamacpp":
+                await backend.check_health(self.http)
+        now = time.monotonic()
+        if not any(b.available(now) for b in self.backends.values()):
+            return
+        for conv in self.conversations.values():
+            if conv.status != "backend_error":
                 continue
-            for conv in (c for c in waiting if c.backend == name):
-                if conv.thread_id in self._workers and not self._workers[conv.thread_id].done():
-                    continue
-                conv.retries += 1
-                self.save(conv)
-                self.trigger(conv)
+            if conv.thread_id in self._workers and not self._workers[conv.thread_id].done():
+                continue
+            conv.retries += 1
+            self.save(conv)
+            self.trigger(conv)
