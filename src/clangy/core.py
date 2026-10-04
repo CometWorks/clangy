@@ -69,7 +69,7 @@ class PendingMessage(BaseModel):
     attachments: list[str] = Field(default_factory=list)
     reference: bool = False
     """Earlier chat that came along with a mention as context, not something to answer."""
-    reply_to: str = ""
+    reply_to_author: str = ""
     """Author of the message this one replies to."""
 
 
@@ -180,7 +180,7 @@ class Clangy:
         self._live_since = datetime.now(timezone.utc)
         """Since when the cache has every message of Clangy's channels and their threads."""
         self._covered_since: dict[int, datetime] = {}
-        """Channels and threads whose cache reaches further back, from catching up or fetching."""
+        """Channels whose cache reaches further back, from catching up or fetching."""
         self._caught_up: set[int] = set()
         """Conversations that have every message since the last (re)connect."""
         self._message_threads: dict[int, int] = {}
@@ -473,9 +473,9 @@ class Clangy:
                 notes.append(f"{attachment.filename} could not be downloaded")
                 continue
             notes.append(f"attachments/{name} ({human_size(attachment.size)})")
-        reply_to = msg.replied_to.author if msg.replied_to else ""
+        replied = msg.replied_to.author if msg.replied_to else ""
         return PendingMessage(
-            id=msg.id, author=msg.author, text=msg.text, created=msg.created, attachments=notes, reply_to=reply_to
+            id=msg.id, author=msg.author, text=msg.text, created=msg.created, attachments=notes, reply_to_author=replied
         )
 
     def _record(self, conv: Conversation, author: str, when: datetime, text: str, title: str = "") -> None:
@@ -727,7 +727,7 @@ class Clangy:
     def _message_lines(messages: list[PendingMessage]) -> list[str]:
         lines = []
         for m in messages:
-            reply = f" (reply to {m.reply_to})" if m.reply_to else ""
+            reply = f" (reply to {m.reply_to_author})" if m.reply_to_author else ""
             lines.append(f"{m.author}{reply}: {m.text}")
             lines += [f"[host] Attachment from {m.author}: {a}" for a in m.attachments]
         return lines
