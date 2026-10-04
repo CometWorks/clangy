@@ -91,7 +91,8 @@ def write_pi_config(paths: RunPaths, backend: BackendConfig, port: int) -> None:
     paths.agent_dir.mkdir(parents=True, exist_ok=True)
     model = {
         "id": PI_MODEL,
-        "reasoning": backend.thinking != "off",
+        # pi sends a thinkingFormat's "thinking off" only to reasoning models; without it Qwen thinks by default
+        "reasoning": backend.thinking != "off" or "thinkingFormat" in backend.compat,
         "contextWindow": backend.context_window,
         "maxTokens": backend.max_tokens,
     }
@@ -192,7 +193,9 @@ def final_result(event: dict) -> RunResult:
     last = assistant[-1]
     if last.get("stopReason") in ("error", "aborted"):
         return RunResult(error=last.get("errorMessage") or last["stopReason"])
-    text = "\n".join(c["text"] for c in last.get("content", []) if c.get("type") == "text").strip()
+    text = "\n".join(c["text"] for c in last.get("content", []) if c.get("type") == "text")
+    # With reasoning off, a model may still write its reasoning into the answer, ended by a stray tag
+    text = text.rpartition("</think>")[2].strip()
     return RunResult(answer=text) if text else RunResult(error="empty answer")
 
 

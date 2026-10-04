@@ -38,10 +38,11 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `api_key` | none | The API key. Keep the config readable only by the bot's user. |
 | `api_key_env` | none | Environment variable with the API key, used when `api_key` is unset. The key never enters the sandbox. |
 | `parallel` | `1` | Runs at once. For llama.cpp, match the server's `--parallel` (slots). |
+| `priority` | `1` | Lower is preferred. A backend gets runs only while every more preferred one has failed or is fully busy (`parallel` runs). The nas: OpenRouter free models 1, polaris 2, the paid `openai/gpt-6-luna` 9. |
 | `kind` | `openai` | `llamacpp` enables slot pinning with `id_slot`, and a failed server gets runs again once its health check passes. Other kinds come back after `cooldown`. |
 | `slot_save` | `false` | llama.cpp: save and restore slot KV caches when conversations swap slots. Needs `--slot-save-path` on the server. |
 | `context_window`, `max_tokens` | `131072`, `4096` | Passed to pi. |
-| `thinking` | `off` | pi thinking level: `off`, `minimal`, `low`, `medium`, `high`. |
+| `thinking` | `off` | pi thinking level: `off`, `minimal`, `low`, `medium`, `high`. With `compat.thinkingFormat` set, `off` is sent to the server explicitly; Qwen otherwise thinks by default. For OpenRouter use `extra_body.reasoning` instead. |
 | `compat` | `{}` | pi `compat` options for the model, e.g. `thinkingFormat = "qwen-chat-template"`. See pi's `docs/models.md`. |
 | `prompt_tps`, `gen_tps` | `300`, `40` | Starting speeds for the ETA. Measured speeds replace them (llama.cpp reports them; cloud APIs don't, so their values stay). |
 | `extra_body` | `{}` | Merged into every chat completion request, after `model`. Carries OpenRouter's `models`, `reasoning` and `provider`. |
@@ -49,7 +50,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `stall_timeout` | none | A request fails if its stream stops for this long after the first data. |
 | `cooldown` | `60` | Kinds other than `llamacpp`: how long a failed backend gets no runs, longer if it sent `Retry-After`. |
 
-A request fails on a connection error, HTTP 408, 429 or 5xx, an error inside the stream (an event with `error`, or `finish_reason` `error`), or one of the timeouts. The run is then repeated on another backend right away, see design.md, Backends.
+A request fails on a connection error, HTTP 401, 402, 403, 404, 408, 429 or 5xx (the backend can't serve now; a 400 means the request itself was rejected and isn't one), an error inside the stream (an event with `error`, or `finish_reason` `error`), or one of the timeouts. The run is then repeated on another backend right away, see design.md, Backends.
 
 ### OpenRouter free models
 
@@ -60,6 +61,7 @@ A request fails on a connection error, HTTP 408, 429 or 5xx, an error inside the
 - Free models are often rate limited upstream (429). `google/gemma-4-31b-it:free` was every time when tested, so it's last.
 - `reasoning = { enabled = false }` turns reasoning off whichever model answers. Use it instead of `compat.thinkingFormat`, which only fits one model family. `reasoning = { effort = "low" }` turns it back on.
 - `nvidia/nemotron-3-super-120b-a12b:free` works only while the account allows free-model providers to use the prompts for training. With `provider = { data_collection = "deny" }` it returns 404. Everything sent to free models may be logged and trained on; that includes the support threads and the attachments the agent reads.
+- Paid models such as `openai/gpt-6-luna` need a key whose credit limit is above 0, otherwise they answer 403 "Key limit exceeded".
 - The key goes into `api_key` in the config (the nas: `~/clangy.toml`, mode 600) or into the variable named by `api_key_env`.
 
 ## `[[channels]]`

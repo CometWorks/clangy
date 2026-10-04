@@ -32,8 +32,9 @@ class ToolReply:
 
 
 ToolHandler = Callable[[str, dict], Awaitable[ToolReply | str]]
-FAILED_STATUSES = {408, 429}
-"""Besides 5xx: the backend timed out or is rate limited, another backend may answer."""
+FAILED_STATUSES = {401, 402, 403, 404, 408, 429}
+"""Besides 5xx: the backend can't serve now (key, credit or model unavailable, timeout, rate limit), unlike a
+request it rejects (400). Another backend may answer."""
 MIN_SPEED_SAMPLE = 500
 """Prompt tokens a request must process to count as a speed sample."""
 

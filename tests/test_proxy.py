@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import aiohttp
+import pytest
 
 from clangy.backend import Backend
 from clangy.config import BackendConfig
@@ -148,11 +149,18 @@ async def test_extra_body_and_key_from_config_reach_the_backend(backend, tmp_pat
     assert run.stats.per_request[0]["model"] == "b/model:free", "the model that answered"
 
 
-async def test_rate_limit_is_a_backend_failure(backend, tmp_path):
-    backend.status = 429
+@pytest.mark.parametrize("code", [403, 429])
+async def test_rate_and_key_limits_are_backend_failures(backend, tmp_path, code):
+    backend.status = code
     run, [(status, _)] = await chat_once(cloud(backend.url), tmp_path)
-    assert status == 429 and run.stats.backend_failed and run.stats.retry_after is None
-    assert run.stats.per_request[0]["error"] == "HTTP 429"
+    assert status == code and run.stats.backend_failed and run.stats.retry_after is None
+    assert run.stats.per_request[0]["error"] == f"HTTP {code}"
+
+
+async def test_rejected_request_is_no_backend_failure(backend, tmp_path):
+    backend.status = 400
+    run, _ = await chat_once(cloud(backend.url), tmp_path)
+    assert not run.stats.backend_failed
 
 
 async def test_retry_after_is_kept(backend, tmp_path):

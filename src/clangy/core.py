@@ -95,6 +95,8 @@ class Conversation(BaseModel):
     known: dict[int, KnownMessage] = Field(default_factory=dict)
     sent_files: list[str] = Field(default_factory=list)
     """Work folder paths of the files already sent, each file goes out at most once."""
+    title: str = ""
+    """The forum post's title as last told to the model."""
 
     @property
     def key(self) -> str:
@@ -244,6 +246,11 @@ class Clangy:
         channel = self.config.channel(conv.channel_id) if conv else None
         if conv is None or channel is None:
             return
+        if channel.mode != "mention" and msg.thread_name and msg.thread_name != conv.title:
+            # A forum post's title is often the question itself
+            renamed = " is now" if conv.title else ""
+            conv.host_notes.append(f"[host] The title of the forum post{renamed}: {msg.thread_name}")
+            conv.title = msg.thread_name
         await self._add_message(conv, channel, msg)
         if msg.mentions_bot:
             self._cancel_first_answer(conv)
@@ -524,9 +531,10 @@ class Clangy:
     async def _choose_backend(self, conv: Conversation, new_tokens: int) -> tuple[Backend | None, str | None]:
         """The backend for the next run, and why it isn't the conversation's current one.
 
-        A conversation stays on its backend, whose cache holds it, unless that failed or another backend is faster
-        by switch_margin even after reading the whole conversation. New ones go where the answer comes soonest;
-        ties go to the backend listed first.
+        Runs go to the most preferred backend (lowest priority) that works and has a free slot. A conversation stays
+        on its backend, whose cache holds it, unless a more preferred one is free, its backend failed, or another
+        backend is faster by switch_margin even after reading the whole conversation. Less preferred backends count
+        for that only while the conversation's backend is fully busy. Ties go to the backend listed first.
         """
         now = time.monotonic()
         available = [b for b in self.backends.values() if b.available(now)]
@@ -538,18 +546,32 @@ class Clangy:
         if not available:
             return None, None
         current = self.backends.get(conv.backend)
-        staying = current in available
 
-        def eta(backend: Backend) -> tuple[float, bool]:
-            if backend is current:
-                return backend.estimate(conv.key, new_tokens, ANSWER_TOKENS), False
-            margin = self.config.switch_margin if staying else 0.0
-            return backend.estimate(conv.key, conv.context_tokens + new_tokens, ANSWER_TOKENS) + margin, True
+        def eta(backend: Backend) -> float:
+            tokens = new_tokens if backend is current else conv.context_tokens + new_tokens
+            return backend.estimate(conv.key, tokens, ANSWER_TOKENS)
 
-        best = min(available, key=eta)
-        if best is current:
-            return best, None
-        return best, "new" if current is None else "balance" if staying else "failure"
+        def free(backend: Backend) -> bool:
+            return backend.ahead_of(conv.key) == 0
+
+        if current in available:
+            preferred = [b for b in available if b.config.priority < current.config.priority and free(b)]
+            if preferred:
+                return min(preferred, key=lambda b: (b.config.priority, eta(b))), "priority"
+            busy = not free(current)
+            others = [
+                b for b in available if b is not current and (b.config.priority == current.config.priority or busy)
+            ]
+            faster = [b for b in others if eta(b) + self.config.switch_margin < eta(current)]
+            if faster:
+                return min(faster, key=lambda b: (eta(b), b.config.priority)), "balance"
+            return current, None
+        free_ones = [b for b in available if free(b)]
+        if free_ones:
+            best = min(free_ones, key=lambda b: (b.config.priority, eta(b)))
+        else:
+            best = min(available, key=lambda b: (eta(b), b.config.priority))
+        return best, "new" if current is None else "failure"
 
     async def _finish(
         self,

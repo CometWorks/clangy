@@ -24,7 +24,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 1. A trigger (see below) posts a progress message right away and starts the conversation's worker. A trigger during a run sets a flag, and the worker runs again afterwards.
 2. The worker picks the backend (see Backends) and waits for a slot on it. The progress message shows the queue position and an ETA.
 3. The host snapshots the pi session file, refreshes the work folder links (`attachments`, `store`, `guide`, the game's knowledge), writes pi's `models.json` and `settings.json`, and opens the host socket.
-4. pi runs in firejail with `--mode json --print --session <file>`. The prompt is a `[host]` timestamp line, then every queued message as `Name: text` plus attachment notes.
+4. pi runs in firejail with `--mode json --print --session <file>`. The prompt is a `[host]` timestamp line, then every queued message as `Name: text` plus attachment notes. In forums, a note gives the post's title when the model hasn't seen it yet or it changed, since the title is often the question itself.
 5. On success the queued messages are dropped, the answer replaces the progress message, and parts over 2000 characters go into follow-up messages. Every answer ends with the fixed mention reminder.
 6. On a timeout, backend failure or other failure the session file is restored from the snapshot, so partial output never reaches the next run, and the queued messages stay queued.
 
@@ -77,7 +77,7 @@ A follow-up should cost only its new tokens. What keeps the prefix byte-identica
 
 `tests/test_pi_integration.py` checks with the real pi that the system prompt matches the file and that each request extends the previous one byte for byte.
 
-One known gap: Qwen chat templates drop the reasoning of earlier turns, so after a thinking turn the server re-processes the tokens from the last assistant message on. Everything before that stays cached.
+One known gap with thinking on: Qwen chat templates drop the reasoning of earlier turns, so after a thinking turn the server re-processes the tokens from the last assistant message on. Everything before that stays cached.
 
 `metrics.jsonl` (see Metrics) records cached and processed tokens of every request. Use it to confirm caching on a long thread.
 
@@ -95,13 +95,15 @@ The deadline (`run_deadline`) starts when the run leaves the queue. pi is killed
 
 Every backend that works serves conversations. Switching is kept rare because a backend that hasn't seen a conversation has to read all of it: tens of thousands of tokens, a minute or more on polaris. OpenRouter caches prompts too (`cached_tokens` in its usage), so staying put pays off there as well.
 
-Before each run the host picks the backend:
+Each backend has a `priority`, lower is preferred. A backend is free when it would start the run without queueing. Before each run the host picks the backend:
 
-- New conversation, or its backend was removed from the config: the available backend with the lowest ETA (see Progress and ETA). Ties go to the backend listed first, so the local GPU wins while it's idle.
-- Existing conversation whose backend is available: it stays, unless another backend's ETA for the whole conversation (the last answer's prompt and completion tokens plus the new text) plus `switch_margin` beats the current backend's ETA for the new text alone. In practice it moves when its backend is busy with other answers and another one is idle.
-- Its backend failed: the available backend with the lowest ETA for the whole conversation.
+- New conversation, its backend was removed from the config, or its backend failed: the most preferred free backend, the lowest ETA (see Progress and ETA) among equals. If none is free, the lowest ETA of all, ties by priority.
+- Existing conversation whose backend works: it moves to a more preferred backend that is free (reason `priority`). Otherwise it stays, unless another backend's ETA for the whole conversation (the last answer's prompt and completion tokens plus the new text) plus `switch_margin` beats the current backend's ETA for the new text alone (`balance`). Only backends of the same priority count for that, and less preferred ones too while the conversation's backend is fully busy. In practice it moves down when its backend is busy and another one is idle, and back up as soon as the preferred one has room.
+- Remaining ties go to the backend listed first.
 
-The proxy flags a backend failure on a connection error, HTTP 408, 429 or 5xx, an error event inside a stream that started with HTTP 200 (OpenRouter does this when the provider fails), no data within `first_byte_timeout`, or a stream that stops for `stall_timeout`. After a failure it refuses the run's further requests, and on a broken stream it sends pi an error event, so pi ends the turn with an error instead of taking a cut-off answer as complete. The run's output is dropped (session restored, messages kept).
+With the nas priorities, conversations run on OpenRouter's free models, move to polaris while those are rate limited or both slots are busy, and to the paid model only when polaris fails or is busy too. Moving back up is cheap: OpenRouter reads a 10k-token conversation in about a second.
+
+The proxy flags a backend failure on a connection error, HTTP 401, 402, 403, 404, 408, 429 or 5xx, an error event inside a stream that started with HTTP 200 (OpenRouter does this when the provider fails), no data within `first_byte_timeout`, or a stream that stops for `stall_timeout`. After a failure it refuses the run's further requests, and on a broken stream it sends pi an error event, so pi ends the turn with an error instead of taking a cut-off answer as complete. The run's output is dropped (session restored, messages kept).
 
 The failed backend is marked unavailable and the run starts again right away on another one, showing "retry 1/3". Only when no backend is available does the progress message say the backend was lost and wait. A llama.cpp server comes back when its health check (`GET /v1/models`, every `health_interval`, and right away when a run finds no backend) answers. Other kinds come back after `cooldown`, or the `Retry-After` they sent: OpenRouter's model list answers even while every free model is rate limited, so it proves nothing. Every `health_interval` the waiting conversations run again once any backend is available.
 
@@ -153,7 +155,7 @@ Every run, answered or not, appends one JSON line to its conversation's `metrics
 |---|---|
 | `time`, `thread_id`, `channel_id`, `game`, `backend`, `model`, `run` | When and where. `model` is the configured one; `run` counts the conversation's answered runs. |
 | `answered_by` | The models that actually answered the run's requests, from the stream's `model` field. With OpenRouter's `models` list these can differ from `model`, even within one run. |
-| `backend_switch` | Present when the run moved the conversation: `from` (null for a new conversation) and `reason` (`new`, `failure` or `balance`). |
+| `backend_switch` | Present when the run moved the conversation: `from` (null for a new conversation) and `reason` (`new`, `failure`, `priority` or `balance`). |
 | `ok`, `timed_out`, `backend_failed`, `error` | Outcome. `error` holds pi's error or exit status. |
 | `answer_chars`, `tools`, `steps` | Answer length, the tools called in order, model turns. |
 | `predicted_seconds`, `queue_seconds`, `run_seconds`, `total_seconds` | The ETA at trigger time, the wait for the backend, the run itself, and trigger to answer. |

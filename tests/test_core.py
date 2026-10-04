@@ -125,7 +125,8 @@ def message(channel_id: int, text: str, parent_id: int | None = None, **kwargs) 
 
 
 def forum_post(forum: int, thread: int, text: str, **kwargs) -> IncomingMessage:
-    return message(thread, text, parent_id=forum, id=thread, starts_thread=True, thread_name="Post", **kwargs)
+    kwargs.setdefault("thread_name", "Post")
+    return message(thread, text, parent_id=forum, id=thread, starts_thread=True, **kwargs)
 
 
 async def test_forum_post_gets_initial_answer(bot, chat):
@@ -549,7 +550,7 @@ async def test_edits_and_deletions_apply_to_the_next_run(bot, chat):
     await bot.wait_idle()
     first = bot.agent.prompts[0]
     assert (
-        "Bob: fixed text" in first and "typo here" not in first and "spam" not in first and "[host]" not in first[25:]
+        "Bob: fixed text" in first and "typo here" not in first and "spam" not in first and first.count("[host]") == 2
     )
 
     # Already seen by the model: the next run gets notes
@@ -589,7 +590,7 @@ async def test_own_and_unknown_edits_are_ignored(bot):
     bot.on_edit(message(1035, "changed", parent_id=QUIET_FORUM, id=4242))
     bot.on_delete(4243)
     conv = bot.conversations[1035]
-    assert conv.pending[0].text == "Question" and conv.host_notes == []
+    assert conv.pending[0].text == "Question" and conv.host_notes == ["[host] The title of the forum post: Post"]
 
 
 async def test_record_mode_logs_edits_and_deletions(bot, config):
@@ -849,3 +850,60 @@ async def test_context_size_is_kept_for_the_switch_rule(duo, backend):
     await duo.on_message(forum_post(SUPPORT, 1120, "Hello"))
     await duo.wait_idle()
     assert duo.conversations[1120].context_tokens == 5007
+
+
+async def test_forum_title_goes_to_the_model(bot, config):
+    await bot.on_message(
+        forum_post(RECORD, 1130, "Because then they'll all be pink", thread_name="Plugin to paint ships")
+    )
+    in_thread = {"parent_id": RECORD, "thread_name": "Plugin to paint ships"}
+    await bot.on_message(message(1130, "@Clangy Is this a reasonable plugin idea?", mentions_bot=True, **in_thread))
+    await bot.wait_idle()
+    assert "[host] The title of the forum post: Plugin to paint ships\nAlice: Because" in bot.agent.prompts[0]
+
+    await bot.on_message(message(1130, "@Clangy and?", mentions_bot=True, **in_thread))
+    await bot.wait_idle()
+    assert "title" not in bot.agent.prompts[1], "told once"
+
+    in_thread["thread_name"] = "Plugin to paint ships pink"
+    await bot.on_message(message(1130, "@Clangy renamed", mentions_bot=True, **in_thread))
+    await bot.wait_idle()
+    assert "[host] The title of the forum post is now: Plugin to paint ships pink" in bot.agent.prompts[2]
+
+
+async def test_mention_threads_get_no_title_note(bot):
+    await bot.on_message(message(MENTION, "@Clangy hello", mentions_bot=True))
+    await bot.on_message(message(1, "@Clangy more", parent_id=MENTION, mentions_bot=True, thread_name="hello"))
+    await bot.wait_idle()
+    assert not any("title" in prompt for prompt in bot.agent.prompts)
+
+
+async def test_priority_decides_before_speed(config, chat, backend, backend2):
+    config.backends = [
+        BackendConfig(name="local", url=backend.url, model="m", kind="llamacpp", priority=2),
+        BackendConfig(name="cloud", url=backend2.url, model="c", priority=1, parallel=2),
+    ]
+    bot = Clangy(config, chat, run_agent=FakeAgent())
+    local, cloud = bot.backends["local"], bot.backends["cloud"]
+    local.run_seconds = 5.0
+    new = Conversation(thread_id=1, channel_id=SUPPORT, guild_id=GUILD)
+    assert await bot._choose_backend(new, 3000) == (cloud, "new"), "preferred, though slower"
+
+    on_cloud = Conversation(thread_id=2, channel_id=SUPPORT, guild_id=GUILD, backend="cloud", context_tokens=100)
+    assert await bot._choose_backend(on_cloud, 100) == (cloud, None), "a less preferred one doesn't count while free"
+
+    await cloud.acquire("a")
+    await cloud.acquire("b")
+    assert await bot._choose_backend(new, 3000) == (local, "new"), "the preferred one is fully busy"
+    assert await bot._choose_backend(on_cloud, 100) == (local, "balance"), "busy, and local is faster by the margin"
+
+    on_local = Conversation(thread_id=3, channel_id=SUPPORT, guild_id=GUILD, backend="local", context_tokens=100)
+    assert await bot._choose_backend(on_local, 100) == (local, None)
+    await cloud.release("a")
+    assert await bot._choose_backend(on_local, 100) == (cloud, "priority"), "back once the preferred one is free"
+
+    await local.acquire("c")
+    await cloud.acquire("a")
+    local.run_seconds = cloud.run_seconds = 60.0
+    assert await bot._choose_backend(new, 3000) == (cloud, "new"), "all busy: the soonest, ties by priority"
+    await bot.close()

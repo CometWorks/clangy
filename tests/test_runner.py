@@ -134,3 +134,18 @@ def test_search_wrappers_follow_links(tmp_path):
     for name in ("rg", "fd"):
         out = subprocess.run([name, "needle", "knowledge"], env=env, capture_output=True, text=True, check=True)
         assert out.stdout.strip() == f"{name} --follow needle knowledge"
+
+
+def test_thinking_off_is_sent_with_a_thinking_format(tmp_path):
+    paths = RunPaths(tmp_path)
+    write_pi_config(paths, BACKEND.model_copy(update={"thinking": "off"}), 4321)
+    model = json.loads((paths.agent_dir / "models.json").read_text())["providers"]["clangy"]["models"][0]
+    assert model["reasoning"] is True, "pi sends enable_thinking=false only to reasoning models"
+    write_pi_config(paths, BACKEND.model_copy(update={"thinking": "off", "compat": {}}), 4321)
+    model = json.loads((paths.agent_dir / "models.json").read_text())["providers"]["clangy"]["models"][0]
+    assert model["reasoning"] is False
+
+
+def test_reasoning_leaked_into_the_answer_is_cut():
+    event = {"messages": [{"role": "assistant", "content": [{"type": "text", "text": "Got it.\n</think>\n\nGot it."}]}]}
+    assert final_result(event).answer == "Got it."

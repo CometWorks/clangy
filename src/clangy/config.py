@@ -17,6 +17,8 @@ class BackendConfig(BaseModel):
     """Used when set, otherwise the api_key_env variable. Keep the file readable only by the bot."""
     api_key_env: str | None = None
     parallel: int = 1
+    priority: int = 1
+    """Lower is preferred. A backend gets runs only while every more preferred one has failed or is fully busy."""
     kind: Literal["openai", "llamacpp"] = "openai"
     slot_save: bool = False
     """llama.cpp only: save/restore slot KV caches, needs `--slot-save-path` on the server."""

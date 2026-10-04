@@ -21,6 +21,7 @@ name = "r9700"
 url = "http://192.168.1.20:8080/v1"
 model = "qwen3.8-27b-q5"
 kind = "llamacpp"
+priority = 2
 parallel = 2
 slot_save = true
 context_window = 131072
@@ -38,6 +39,7 @@ gen_tps = 40.0
 # kind = "openai"
 # model = "qwen/qwen3.8-27b:free"
 # # api_key = "sk-or-..."   # or api_key_env = "OPENROUTER_API_KEY"
+# priority = 1
 # parallel = 2              # a run makes roughly 7-11 requests
 # context_window = 262144
 # max_tokens = 4096
@@ -49,6 +51,25 @@ gen_tps = 40.0
 # cooldown = 60
 # # OpenRouter falls back within a request, to at most 3 models
 # extra_body = { models = ["qwen/qwen3.8-27b:free", "nvidia/nemotron-3-super-120b-a12b:free", "google/gemma-4-31b-it:free"], reasoning = { enabled = false } }
+
+# A paid OpenRouter model, used only while the others fail or are busy. The key needs a credit limit above 0.
+# [[backends]]
+# name = "openrouter-luna"
+# url = "https://openrouter.ai/api/v1"
+# kind = "openai"
+# model = "openai/gpt-6-luna"
+# # api_key = "sk-or-..."   # or api_key_env = "OPENROUTER_API_KEY"
+# priority = 9
+# parallel = 2
+# context_window = 400000
+# max_tokens = 8192
+# thinking = "off"
+# prompt_tps = 3000.0
+# gen_tps = 100.0
+# first_byte_timeout = 60
+# stall_timeout = 60
+# cooldown = 60
+# extra_body = { reasoning = { enabled = false } }
 
 # Support forum: answers new posts, then only when mentioned
 [[channels]]
