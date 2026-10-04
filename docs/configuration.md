@@ -38,7 +38,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `api_key` | none | The API key. Keep the config readable only by the bot's user. |
 | `api_key_env` | none | Environment variable with the API key, used when `api_key` is unset. The key never enters the sandbox. |
 | `parallel` | `1` | Runs at once. For llama.cpp, match the server's `--parallel` (slots). |
-| `priority` | `1` | Lower is preferred. A backend gets runs only while every more preferred one has failed or is fully busy (`parallel` runs). The nas: OpenRouter free models 1, polaris 2, the paid `openai/gpt-6-luna` 9. |
+| `priority` | `1` | Lower is preferred. A backend gets runs only while every more preferred one has failed or is fully busy (`parallel` runs). The nas: OpenRouter free models 1, polaris 5, the paid `openai/gpt-6-luna` 9. |
 | `kind` | `openai` | `llamacpp` enables slot pinning with `id_slot`, and a failed server gets runs again once its health check passes. Other kinds come back after `cooldown`. |
 | `slot_save` | `false` | llama.cpp: save and restore slot KV caches when conversations swap slots. Needs `--slot-save-path` on the server. |
 | `context_window`, `max_tokens` | `131072`, `4096` | Passed to pi. |
