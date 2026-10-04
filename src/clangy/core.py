@@ -25,7 +25,7 @@ from clangy.files import FileError, Outbox, safe_filename
 from clangy.messages import Attachment, IncomingMessage
 from clangy.proxy import HostServer, ProxyRun, RunStats, TcpRelay, ToolError, ToolReply
 from clangy.runner import PACKAGE_DIR, RunPaths, RunResult, RunSpec, free_port, run_pi, write_pi_config
-from clangy.store import Store, StoreError
+from clangy.store import KeptFile, Store, StoreError
 
 log = logging.getLogger(__name__)
 
@@ -183,7 +183,7 @@ class Clangy:
         self.config = config
         self.chat = chat
         self.run_agent = run_agent
-        self.store = Store(config.data_dir / "store")
+        self.store = Store(config.workspace_dir or config.data_dir / "workspace", config.data_dir / "records")
         self.backends = {b.name: Backend(b) for b in config.backends}
         self.conversations: dict[int, Conversation] = {}
         self._workers: dict[int, asyncio.Task] = {}
@@ -259,7 +259,7 @@ class Clangy:
             with contextlib.suppress(OSError):
                 folder.rmdir()  # Only if no metrics.jsonl kept it
             expired.append(folder.name)
-        for record in (self.store.root / "records").glob("*.md"):
+        for record in self.store.records.glob("*.md"):
             if record.stat().st_mtime < cutoff:
                 record.unlink()
                 expired.append(f"record {record.stem}")
@@ -887,9 +887,13 @@ class Clangy:
         paths.pi_dir.mkdir(parents=True, exist_ok=True)
         received = self.files_dir(conv.thread_id) / "received"
         received.mkdir(parents=True, exist_ok=True)
+        store = paths.work / "store"
+        if store.is_symlink():  # Linked to the whole store before the workspace held tickets, notes and plans
+            store.unlink()
         links = {
             "attachments": received.resolve(),
-            "store": self.store.root.resolve(),
+            **{f"store/{name}": (self.store.root / name).resolve() for name in ("tickets", "notes", "plans")},
+            "store/records": self.store.records.resolve(),
             "guide": GUIDE_DIR,
             **self.knowledge_links(conv.game),
         }
@@ -986,21 +990,43 @@ class Clangy:
         meta = {"thread": conv.url}
         if conv.game:
             meta["game"] = conv.game
-        files = self.files_dir(conv.thread_id)
-        if any(files.glob("*/*")):
-            meta["files"] = str(files)
         match name:
             case "set_game":
                 return self._set_game(conv, params["game"])
             case "attach_files":
                 return self._outboxes[conv.thread_id].add(params["paths"], params.get("archive"))
             case "ticket_create" | "note_create" | "plan_create":
-                doc_id = self.store.create(name.removesuffix("_create"), params["title"], params["body"], meta)
+                files = self._kept_files(conv, params.get("files") or [])
+                doc_id = self.store.create(name.removesuffix("_create"), params["title"], params["body"], meta, files)
                 return f"Created {doc_id}."
             case "ticket_add_report":
-                self.store.add_report(params["id"], params["body"], meta)
+                files = self._kept_files(conv, params.get("files") or [])
+                self.store.add_report(params["id"], params["body"], meta, files)
                 return f"Added the report to {params['id']}."
         raise ToolError(f"unknown tool: {name}")
+
+    def _kept_files(self, conv: Conversation, files: list[dict]) -> list[KeptFile]:
+        """Attachments and files the agent wrote, to keep in the store with where they came from."""
+        work = self._work_dir(conv).resolve()
+        received = (self.files_dir(conv.thread_id) / "received").resolve()
+        kept = []
+        for item in files:
+            path, about = str(item["path"]), " ".join(str(item["about"]).split())
+            source = (work / path).resolve()
+            if source.is_relative_to(received):
+                msg_id = source.name.split("-", 1)[0]
+                known = conv.known.get(int(msg_id)) if msg_id.isdigit() else None
+                origin = f"posted by {known.author}, {known.created:%Y-%m-%d %H:%M} UTC" if known else "posted"
+            elif source.is_relative_to(work) and not any(p.startswith(".") for p in source.relative_to(work).parts):
+                origin = "written by Clangy"
+            else:
+                raise FileError(f"{path} is neither an attachment nor in your work folder")
+            if not source.is_file():
+                raise FileError(f"{path} is not a file")
+            if source.stat().st_size > self.config.attachment_max_bytes:
+                raise FileError(f"{path} is larger than {human_size(self.config.attachment_max_bytes)}")
+            kept.append((source, f"{about} ({origin})" if about else origin.capitalize()))
+        return kept
 
     def _set_game(self, conv: Conversation, game: str) -> ToolReply | str:
         if game not in ("se1", "se2"):

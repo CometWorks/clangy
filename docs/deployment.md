@@ -8,7 +8,8 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 |---|---|
 | `~/clangy/` | The working copy, replaced by every deploy. Its `.venv` is installed there with Python 3.13 from Debian. |
 | `~/clangy.toml` | The config, mode 600 since it holds the Discord token. `deploy/clangy.toml` is its template; deploys never touch it. |
-| `~/data/` | Conversations, store, metrics, the message cache, the sandboxes' Python environment (`python/`). |
+| `~/data/` | Conversations, records, metrics, the message cache, the sandboxes' Python environment (`python/`). |
+| `~/tickets/`, `~/notes/`, `~/plans/`, `~/AGENTS.md` | The workspace (`workspace_dir`): what Clangy files for the developers, and the rules for the agents working on it. See design.md, Store. |
 | `~/skills`, `~/skills2`, `~/se-dev-books`, `~/se2-dev-books`, `~/.se-dev`, `~/.se2-dev` | The prepared knowledge, used in place. |
 | `~/repos/` | Ecosystem and plugin repositories, mounted read-only into every conversation as `repos`; `~/repos/clone-or-pull` updates them daily. |
 | `~/.pi/agent/bin/pi` | pi, installed by its own installer, with Node.js under `~/.local/share/pi-node`. |

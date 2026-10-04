@@ -372,28 +372,57 @@ async def test_system_prompt_is_stable_between_runs(bot):
     assert bot.agent.specs[1].paths.system_prompt.read_text() == first
 
 
-async def test_ticket_tools_link_thread_and_attachments(bot, chat, config):
+async def test_ticket_tools_link_thread_and_keep_files(bot, chat, config):
     chat.files["https://cdn/info.log"] = b"log data"
+
+    async def analyze(agent: FakeAgent, spec: RunSpec) -> RunResult:
+        (spec.paths.work / "out").mkdir()
+        (spec.paths.work / "out" / "plot.png").write_bytes(b"png")
+        files = [
+            {"path": "attachments/1015-info.log", "about": "Pulsar log"},
+            {"path": "out/plot.png", "about": "Frame times"},
+        ]
+        return await tool(
+            "ticket_create", {"title": "Crash on load", "body": "Details", "files": files}, answer("Filed.")
+        )(agent, spec)
+
     bot.agent.script = [
-        tool("ticket_create", {"title": "Crash on load", "body": "Details"}, answer("Filed T-0001.")),
+        analyze,
         tool("ticket_add_report", {"id": "T-0001", "body": "Again"}, answer("Added.")),
         tool("ticket_create", {"title": "", "body": "x"}, answer("Oops.")),
+        tool(
+            "note_create",
+            {"title": "Leak", "body": "x", "files": [{"path": ".pi/session.jsonl", "about": "s"}]},
+            answer("No."),
+        ),
     ]
     attachment = Attachment(1, "info.log", 8, "https://cdn/info.log")
     await bot.on_message(forum_post(SE1_FORUM, 1015, "Crash", attachments=[attachment]))
     await bot.wait_idle()
     work = bot.agent.specs[0].paths.work
     assert (work / "attachments" / "1015-info.log").read_bytes() == b"log data"
-    files = config.data_dir / "conversations" / "1015" / "files"
     assert "[host] Attachment from Alice: attachments/1015-info.log (1 KB)" in bot.agent.prompts[0]
-    ticket = (config.data_dir / "store" / "tickets" / "T-0001.md").read_text()
+    workspace = config.data_dir / "workspace"
+    assert (work / "store" / "tickets").resolve() == (workspace / "tickets").resolve()
+    ticket = (workspace / "tickets" / "T-0001.md").read_text()
     assert f"thread: https://discord.com/channels/{GUILD}/1015\n" in ticket
-    assert "game: se1\n" in ticket and f"files: {files}\n" in ticket
-    for prompt in ("@Clangy same", "@Clangy bad"):
+    assert "game: se1\n" in ticket and "notes: N-0001\n" in ticket and "files:" not in ticket
+    note = workspace / "notes" / "N-0001"
+    assert (note / "1015-info.log").read_bytes() == b"log data" and (note / "plot.png").read_bytes() == b"png"
+    listing = (note / "NOTE.md").read_text()
+    assert "ticket: T-0001\n" in listing
+    assert "- `1015-info.log`: Pulsar log (posted by Alice, " in listing
+    assert "- `plot.png`: Frame times (written by Clangy)" in listing
+    for prompt in ("@Clangy same", "@Clangy bad", "@Clangy leak"):
         await bot.on_message(message(1015, prompt, parent_id=SE1_FORUM, mentions_bot=True))
         await bot.wait_idle()
     assert bot.agent.tool_results[1] == (200, {"text": "Added the report to T-0001.", "stop": False})
     assert bot.agent.tool_results[2] == (400, {"error": "title is empty"})
+    assert bot.agent.tool_results[3] == (
+        400,
+        {"error": ".pi/session.jsonl is neither an attachment nor in your work folder"},
+    )
+    assert not (workspace / "notes" / "N-0002").exists()
 
 
 async def test_files_are_sent_once_and_retained(bot, chat, config):
@@ -481,7 +510,7 @@ async def test_record_mode_stores_thread(bot, chat, config):
     await bot.on_message(forum_post(RECORD, 1018, "Please make a plugin"))
     await bot.on_message(message(1018, "+1", parent_id=RECORD, author="Bob"))
     await bot.wait_idle()
-    record = (config.data_dir / "store" / "records" / "1018.md").read_text()
+    record = (config.data_dir / "records" / "1018.md").read_text()
     assert "title: Post" in record and "**Alice**" in record and "**Bob** (2026-10-03 12:00 UTC): +1" in record
     assert chat.messages == {}
 
@@ -599,7 +628,7 @@ async def test_record_mode_logs_edits_and_deletions(bot, config):
     await bot.on_message(forum_post(RECORD, 1036, "Make a plugin"))
     bot.on_edit(message(1036, "Make a plugin for X", parent_id=RECORD, id=1036))
     bot.on_delete(1036)
-    record = (config.data_dir / "store" / "records" / "1036.md").read_text()
+    record = (config.data_dir / "records" / "1036.md").read_text()
     assert "edited a message, it now reads: Make a plugin for X" in record and "deleted their message" in record
 
 
@@ -1054,7 +1083,7 @@ async def test_python_environment_is_rebuilt_for_a_new_lock_or_after_a_broken_bu
     assert await bot.python_env() == current
     assert len((current.parent / ".uv-calls").read_text().splitlines()) == 1, "a broken build starts over"
 
-    workspace = tmp_path / "workspace"
+    workspace = tmp_path / "python-project"
     shutil.copytree(core.WORKSPACE_DIR, workspace)
     with open(workspace / "uv.lock", "a") as f:
         f.write("\n")
@@ -1081,7 +1110,7 @@ async def test_old_conversations_and_records_are_deleted_at_start(bot, chat, con
     old = time.time() - 31 * 86400
     for path in ("conversations/1143/state.json", "conversations/1145/state.json", "conversations/1146"):
         os.utime(config.data_dir / path, (old, old))
-    os.utime(config.data_dir / "store" / "records" / "1145.md", (old, old))
+    os.utime(config.data_dir / "records" / "1145.md", (old, old))
 
     second = Clangy(config, chat, run_agent=FakeAgent())
     await second.load()
@@ -1089,7 +1118,7 @@ async def test_old_conversations_and_records_are_deleted_at_start(bot, chat, con
     assert sorted(p.name for p in conversations.iterdir()) == ["1143", "1144"]
     assert [p.name for p in (conversations / "1143").iterdir()] == ["metrics.jsonl"]
     assert (conversations / "1144" / "work").is_dir()
-    assert not (config.data_dir / "store" / "records" / "1145.md").exists()
+    assert not (config.data_dir / "records" / "1145.md").exists()
     await second.close()
 
 

@@ -1,6 +1,8 @@
 # Copy to config.toml and adjust. See docs/configuration.md.
 
 data_dir = "/srv/clangy"
+# Tickets, notes and plans; defaults to <data_dir>/workspace
+# workspace_dir = "/srv/clangy-workspace"
 discord_token = ""
 run_deadline = 600.0
 attachment_max_bytes = 26214400

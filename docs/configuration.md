@@ -6,7 +6,8 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 
 | Key | Default | Meaning |
 |---|---|---|
-| `data_dir` | required | Conversations, store and knowledge live here. |
+| `data_dir` | required | Conversations, records and knowledge live here. |
+| `workspace_dir` | `<data_dir>/workspace` | Tickets, notes and plans, kept past `retention_days`. See design.md, Store. |
 | `discord_token` | `""` | Bot token. Falls back to the `DISCORD_TOKEN` environment variable. Keep the config readable only by the bot's user. |
 | `context_window` | smallest backend `context_window` | Caps the context pi may use on every backend. A conversation can move to another backend between runs, so the default keeps it within the smallest one. |
 | `run_deadline` | `600` | Hard limit of a run after it leaves the queue. |

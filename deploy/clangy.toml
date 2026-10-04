@@ -1,6 +1,8 @@
 # Config of the nas deployment, lives at /home/clangy/clangy.toml (mode 600, it holds the token).
 # deploy.sh never overwrites it.
 data_dir = "/home/clangy/data"
+# The home folder is the workspace of tickets, notes and plans
+workspace_dir = "/home/clangy"
 discord_token = ""
 run_deadline = 900.0
 # Caps the context on every backend; unset means the smallest backend context_window
