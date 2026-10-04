@@ -77,11 +77,14 @@ class PendingMessage(BaseModel):
 
 
 class KnownMessage(BaseModel):
-    """A message of the conversation, kept to notice edits and deletions."""
+    """A message of the conversation, kept until the conversation expires: to notice edits and deletions, and to
+    tell the model the conversation again if its pi session is lost."""
 
     author: str
     text: str
     created: datetime
+    own: bool = False
+    """A part of Clangy's answer, without the footer."""
 
 
 Status = Literal["idle", "queued", "running", "backend_error", "failed"]
@@ -268,6 +271,9 @@ class Clangy:
             conv = Conversation.model_validate_json(path.read_text())
             self.conversations[conv.thread_id] = conv
             self._message_threads.update(dict.fromkeys(conv.known, conv.thread_id))
+            if self._session_lost(conv):
+                self._requeue_known(conv)
+                self.save(conv)
             if conv.status not in ("queued", "running"):
                 continue
             self._restore_session(conv)
@@ -277,6 +283,36 @@ class Clangy:
                 await self.chat.edit(conv.thread_id, conv.progress_message_id, text.failed(self.chat.bot_name))
                 conv.progress_message_id = None
                 self.save(conv)
+
+    def _session_lost(self, conv: Conversation) -> bool:
+        """Whether the model has answered in this conversation but its pi session is gone, e.g. deleted by hand."""
+        return conv.runs > 0 and not RunPaths(self._work_dir(conv)).session.exists()
+
+    def _requeue_known(self, conv: Conversation) -> None:
+        """Queues the whole known conversation as earlier messages for the fresh session, with the notes it had."""
+        log.warning(
+            "Pi session of conversation %s is lost, queueing its %d known messages", conv.thread_id, len(conv.known)
+        )
+        queued = {m.id for m in conv.pending}
+        received = self.files_dir(conv.thread_id) / "received"
+        for message_id, known in conv.known.items():
+            if message_id in queued:
+                continue
+            files = sorted(received.glob(f"{message_id}-*"))
+            conv.pending.append(
+                PendingMessage(
+                    id=message_id,
+                    author=known.author,
+                    text=known.text,
+                    created=known.created,
+                    attachments=[f"attachments/{f.name} ({human_size(f.stat().st_size)})" for f in files],
+                    reference=True,
+                    own=known.own,
+                )
+            )
+        if conv.game and not any(n.startswith(knowledge_note_start(conv.game)) for n in conv.host_notes):
+            conv.host_notes.append(self._knowledge_note(conv.game))
+        conv.title = ""  # The next message in a forum tells the title again
 
     # Incoming messages
 
@@ -338,20 +374,25 @@ class Clangy:
         return conv
 
     async def _read_missed(self, conv: Conversation, channel: ChannelConfig, msg: IncomingMessage) -> None:
-        """Queues what was posted in a known thread while Clangy was offline, before the message that just came in."""
+        """Reads all of a known thread before the message that just came in, and queues what the conversation doesn't
+        have: what was posted while Clangy was offline, and as earlier messages, what it never read, e.g. a thread
+        older than a version that reads whole threads. Clangy's own answers come along only if the session is lost."""
         if conv.thread_id in self._caught_up:
             return
         # Before the await, so messages arriving meanwhile don't read the same again
         self._caught_up.add(conv.thread_id)
         newest = max((m.created for m in conv.known.values()), default=None)
         try:
-            missed = await self.chat.history(conv.thread_id, msg.id, None, newest)
+            thread = self._own_answers_only(await self.chat.history(conv.thread_id, msg.id, None, None))
         except HistoryUnavailable as e:
             log.warning("Couldn't read the messages missed in thread %s: %s", conv.thread_id, e)
             return
-        for message in missed:
-            if not message.from_self and message.id not in conv.known and said_something(message):
-                await self._add_message(conv, channel, message)
+        lost = self._session_lost(conv)
+        for message in thread:
+            if message.id in conv.known or not said_something(message) or message.from_self and not lost:
+                continue
+            older = newest is not None and message.created < newest
+            await self._add_message(conv, channel, message, reference=message.from_self or older)
 
     def _watched(self, msg: IncomingMessage) -> bool:
         """Whether the message is in one of Clangy's channels or their threads."""
@@ -422,7 +463,7 @@ class Clangy:
         if channel.mode == "record" and not reference:
             files = "".join(f"\n- attachment: {a.filename}" for a in msg.attachments)
             self._record(conv, msg.author, msg.created, msg.text + files, msg.thread_name)
-        conv.known[msg.id] = KnownMessage(author=msg.author, text=msg.text, created=msg.created)
+        conv.known[msg.id] = KnownMessage(author=msg.author, text=msg.text, created=msg.created, own=msg.from_self)
         self._message_threads[msg.id] = conv.thread_id
         pending = await self._pending(conv, msg)
         pending.reference = reference
@@ -480,6 +521,9 @@ class Clangy:
         conv = self.conversations.get(self._message_threads.pop(message_id, 0))
         known = conv.known.pop(message_id, None) if conv else None
         if conv is None or known is None:
+            return
+        if known.own:
+            self.save(conv)
             return
         if queued := self._queued(conv, message_id):
             conv.pending.remove(queued)
@@ -770,7 +814,7 @@ class Clangy:
         now = datetime.now(timezone.utc)
         lines = [f"[host] {now:%Y-%m-%d %H:%M} UTC"]
         lines += conv.host_notes
-        reference = [m for m in conv.pending if m.reference]
+        reference = sorted((m for m in conv.pending if m.reference), key=lambda m: m.created)
         if reference:
             lines.append(
                 "[host] Earlier messages, for reference only. Don't answer them; "
@@ -981,12 +1025,22 @@ class Clangy:
 
     async def _post_answer(self, conv: Conversation, answer: str, files: list[Path]) -> None:
         """Posts the answer, replacing the progress message; the files go with the last part."""
-        parts = text.answer_parts(answer, text.footer(self.chat.bot_name))
+        footer = text.footer(self.chat.bot_name)
+        parts = text.answer_parts(answer, footer)
         await self._show(conv, parts[0], files if len(parts) == 1 else None)
+        ids = [conv.progress_message_id]
         conv.progress_message_id = None
         self.save(conv)
         for i, part in enumerate(parts[1:], start=2):
-            await self.chat.send(conv.thread_id, part, files if i == len(parts) else None)
+            ids.append(await self.chat.send(conv.thread_id, part, files if i == len(parts) else None))
+        now = datetime.now(timezone.utc)
+        for message_id, part in zip(ids, parts):
+            own = KnownMessage(
+                author=self.chat.bot_name, text=part.removesuffix(footer).rstrip(), created=now, own=True
+            )
+            conv.known[message_id] = own
+            self._message_threads[message_id] = conv.thread_id
+        self.save(conv)
 
     async def _update_progress(self, conv: Conversation, backend: Backend, progress: Progress, shown: str) -> None:
         while True:

@@ -114,4 +114,4 @@ polaris serves one slot (`parallel = 1`). With more slots, set `parallel` to the
 
 v2 uses the bot registration v1 had (`Clangy#0168`), with its intents (Message Content), OAuth2 scopes, bot permissions and per-channel member overwrites (see v1's `docs/Permissions.md`). v2 also needs Create Public Threads and Send Messages in Threads in mention-mode channels, and Attach Files wherever it answers. v1 is retired.
 
-v2 acts only in the channels listed in `[[channels]]`; keep the member overwrites in line with that list. Threads v1 started are never continued.
+v2 acts only in the channels listed in `[[channels]]`; keep the member overwrites in line with that list. v1's conversations aren't taken over: a mention in a thread v1 answered starts a new conversation there, which leaves v1's answers out.
