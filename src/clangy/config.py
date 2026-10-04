@@ -107,6 +107,8 @@ class Config(BaseModel):
     max_retries: int = 3
     switch_margin: float = 60.0
     """A conversation moves to another backend only if that's faster by this much, after reading the whole prompt."""
+    retention_days: float = Field(30.0, gt=0)
+    """Conversations and records not touched for this long are deleted at startup, the message cache sooner."""
     secret_markers: list[str] = Field(default_factory=lambda: ["se-dev-books", "se2-dev-books", "knowledge/books"])
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     knowledge: dict[Game, list[KnowledgeSource]] = Field(default_factory=dict)

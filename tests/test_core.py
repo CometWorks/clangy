@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import shutil
 import time
 from collections.abc import Awaitable, Callable
@@ -1002,3 +1003,35 @@ async def test_answers_still_come_without_python_environment(bot, chat, config):
     await bot.wait_idle()
     assert chat.in_channel(1141)[0].current.startswith("Default answer.")
     assert bot.agent.specs[0].venv is None
+
+
+async def test_old_conversations_and_records_are_deleted_at_start(bot, chat, config):
+    await bot.on_message(forum_post(SUPPORT, 1143, "Old question"))
+    await bot.on_message(forum_post(SUPPORT, 1144, "New question"))
+    await bot.on_message(forum_post(RECORD, 1145, "Old request"))
+    await bot.wait_idle()
+    conversations = config.data_dir / "conversations"
+    (conversations / "1146" / "files" / "received").mkdir(parents=True)  # Left without a state.json
+    old = time.time() - 31 * 86400
+    for path in ("conversations/1143/state.json", "conversations/1145/state.json", "conversations/1146"):
+        os.utime(config.data_dir / path, (old, old))
+    os.utime(config.data_dir / "store" / "records" / "1145.md", (old, old))
+
+    second = Clangy(config, chat, run_agent=FakeAgent())
+    await second.load()
+    assert set(second.conversations) == {1144}
+    assert sorted(p.name for p in conversations.iterdir()) == ["1143", "1144"]
+    assert [p.name for p in (conversations / "1143").iterdir()] == ["metrics.jsonl"]
+    assert (conversations / "1144" / "work").is_dir()
+    assert not (config.data_dir / "store" / "records" / "1145.md").exists()
+    await second.close()
+
+
+async def test_cache_never_outlives_the_retention(bot, config, monkeypatch):
+    pruned = []
+    monkeypatch.setattr(bot.cache, "prune", pruned.append)
+    bot.expire()
+    config.retention_days = 0.5
+    bot.expire()
+    now = datetime.now(timezone.utc)
+    assert [round((now - when).total_seconds() / 3600) for when in pruned] == [48, 12]

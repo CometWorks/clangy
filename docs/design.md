@@ -40,11 +40,11 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 - A mention in a thread Clangy doesn't know yet (started before it ran, or by someone else in a text channel) starts a conversation in that thread, with the whole thread as context, read from Discord. A thread is one conversation, and its first post is often the request itself.
 - Without context Clangy doesn't answer: if the history can't be read, it logs an error and stays silent.
 - Nothing is answered after the fact: messages posted while Clangy was down are context for later mentions, never triggers. After every gateway (re)connect, the first message in a known thread first reads from Discord what was posted there since the newest message Clangy has, and queues it ahead of that message.
-- `record` channels also append every message to `store/records/<thread>.md`, without inference, so other conversations can find requests later.
+- `record` channels also append every message to `store/records/<thread>.md`, without inference, so other conversations can find requests later. A record expires `retention_days` after its last message (see Retention).
 
 ### Context and the message cache
 
-A mention in a thread Clangy doesn't know yet reads all of the thread from Discord. In a channel, a mention's context reaches back to midnight UTC, but at least `history_hours` (4), and at most `history_messages` (100) messages. Reading that from Discord is slow, so Clangy keeps every message of its channels and their threads in `<data_dir>/messages.sqlite` as it arrives, applies edits and deletions to it, and prunes it after two days. On every gateway (re)connect it catches up the mention channels' context windows from Discord, one request each, since a restart or a dropped session loses events. A mention reads its context from the cache and only asks Discord for what the cache doesn't cover, and caches that too. Attachments of older messages may have expired links; they become a note instead of a file.
+A mention in a thread Clangy doesn't know yet reads all of the thread from Discord. In a channel, a mention's context reaches back to midnight UTC, but at least `history_hours` (4), and at most `history_messages` (100) messages. Reading that from Discord is slow, so Clangy keeps every message of its channels and their threads in `<data_dir>/messages.sqlite` as it arrives, applies edits and deletions to it, and prunes it after two days, or after `retention_days` if that's shorter. On every gateway (re)connect it catches up the mention channels' context windows from Discord, one request each, since a restart or a dropped session loses events. A mention reads its context from the cache and only asks Discord for what the cache doesn't cover, and caches that too. Attachments of older messages may have expired links; they become a note instead of a file.
 
 A message that the mention or its context replies to comes along even if it is older, one level deep: Discord sends it with the reply. Replies show it in the prompt as `Name (reply to Other): text`. A thread started from a channel message opens with an empty message that points to that message, so the same rule brings the thread's first message along. The cache keeps the id of the message a reply points to, and caches that message too, without overwriting a row it already has. A new cache schema (`user_version`) drops the old table, and the catch-up fills it again.
 
@@ -174,7 +174,7 @@ Sent: the agent writes files in its work folder (by convention `out/`) and calls
 - keeps an answer within Discord's 10 attachments and `answer_max_bytes` in total;
 - stages the files in `files/outbox/`. If the run succeeds they move to `files/sent/<run number>/` and go out with the last part of the answer. If it fails they are dropped and can be sent again.
 
-`files/` is outside the sandbox's writable area, so everything received and sent stays even if the agent deletes its own copies. Tickets point at it with a `files:` frontmatter entry.
+`files/` is outside the sandbox's writable area, so everything received and sent stays even if the agent deletes its own copies, until the conversation expires (see Retention). Tickets point at it with a `files:` frontmatter entry.
 
 ## Store
 
@@ -214,3 +214,9 @@ The host socket is bound through `/proc/self/fd/<dir fd>/host.sock` and pi conne
 - `files/`: `received/` attachments, `sent/<run>/` files sent in answers, `outbox/` while a run is staging files. Host only.
 - `work/`: the sandbox's folder: the files the agent writes (`out/`), the `attachments`, `store`, `guide` and knowledge links, `.pi/` (session, its snapshot `session.bak` from before the current run, system prompt, pi config) and, during a run, `.clangy/host.sock` and `.clangy/proxy.sock`.
 - `metrics.jsonl`: per-request token and timing stats.
+
+### Retention
+
+At startup, before loading the conversations, Clangy deletes what it kept of conversations nobody touched for `retention_days` (30): everything in the conversation's folder except `metrics.jsonl`, which holds no message text and keeps `clangy timings` complete. A conversation's age is the modification time of its `state.json`, which every message, edit and answer rewrites. A folder without `state.json` goes by its own modification time. `state.json` is deleted last, so a cleanup cut short is finished on the next start. `store/records/<thread>.md` files go by their modification time too. The message cache is pruned at the same time.
+
+The service restarts daily (see deployment.md), so nothing is kept more than a day past the limit. A mention in an expired thread starts a new conversation, with the whole thread read from Discord. Tickets, notes and plans stay, but their `files:` links point at deleted folders. Copies outside `data_dir` are not covered: llama.cpp slot saves on the backend host (`--slot-save-path`) and the service's journal.

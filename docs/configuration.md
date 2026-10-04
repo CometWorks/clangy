@@ -15,6 +15,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `health_interval` | `30` | How often to check failed llama.cpp backends and retry the conversations waiting for a backend. |
 | `max_retries` | `3` | Automatic retries after a backend failure, counted from the last mention. |
 | `switch_margin` | `60` | A conversation moves to another backend only if that one answers sooner by this much, even after reading the whole conversation again. See design.md, Backends. |
+| `retention_days` | `30` | Conversations (all but `metrics.jsonl`) and records not touched for this long are deleted at startup. The message cache keeps two days at most. See design.md, Retention. |
 | `secret_markers` | book names, `knowledge/books` | Answers containing any of these (case-insensitive) are withheld. |
 
 ## `[sandbox]`

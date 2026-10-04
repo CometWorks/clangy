@@ -9,6 +9,7 @@ progress_interval = 60.0
 health_interval = 30.0
 max_retries = 3
 switch_margin = 60.0
+retention_days = 30
 
 [sandbox]
 firejail = true
