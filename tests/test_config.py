@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from clangy.config import Config, KnowledgeSource
+from clangy.config import BackendConfig, Config, KnowledgeSource
 
 ROOT = Path(__file__).parent.parent
 
@@ -28,3 +28,16 @@ def test_example_config_loads():
 def test_invalid_knowledge_sources(source):
     with pytest.raises(ValidationError):
         KnowledgeSource.model_validate(source)
+
+
+def test_context_limit_defaults_to_the_smallest_backend(tmp_path):
+    backends = [
+        BackendConfig(name=n, url="http://x/v1", model="m", context_window=w) for n, w in [("a", 400000), ("b", 184320)]
+    ]
+    assert Config(data_dir=tmp_path, backends=backends).context_limit() == 184320
+    assert Config(data_dir=tmp_path, backends=backends, context_window=100000).context_limit() == 100000
+
+
+def test_reasoning_in_extra_body_is_refused():
+    with pytest.raises(ValidationError, match="thinking"):
+        BackendConfig(name="b", url="http://x/v1", model="m", extra_body={"reasoning": {"effort": "minimal"}})

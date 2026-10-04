@@ -45,7 +45,7 @@ def test_unsandboxed_command(tmp_path):
 
 def test_pi_config_points_at_the_bridge(tmp_path):
     paths = RunPaths(tmp_path)
-    write_pi_config(paths, BACKEND, 4321)
+    write_pi_config(paths, BACKEND, 4321, 131072)
     provider = json.loads((paths.agent_dir / "models.json").read_text())["providers"]["clangy"]
     assert provider["baseUrl"] == "http://127.0.0.1:4321/v1"
     assert provider["compat"] == {"supportsDeveloperRole": False, "thinkingFormat": "qwen"}
@@ -138,12 +138,25 @@ def test_search_wrappers_follow_links(tmp_path):
 
 def test_thinking_off_is_sent_with_a_thinking_format(tmp_path):
     paths = RunPaths(tmp_path)
-    write_pi_config(paths, BACKEND.model_copy(update={"thinking": "off"}), 4321)
+    write_pi_config(paths, BACKEND.model_copy(update={"thinking": "off"}), 4321, 131072)
     model = json.loads((paths.agent_dir / "models.json").read_text())["providers"]["clangy"]["models"][0]
     assert model["reasoning"] is True, "pi sends enable_thinking=false only to reasoning models"
-    write_pi_config(paths, BACKEND.model_copy(update={"thinking": "off", "compat": {}}), 4321)
+    write_pi_config(paths, BACKEND.model_copy(update={"thinking": "off", "compat": {}}), 4321, 131072)
     model = json.loads((paths.agent_dir / "models.json").read_text())["providers"]["clangy"]["models"][0]
     assert model["reasoning"] is False
+
+
+def test_openrouter_thinking_becomes_its_reasoning_effort(tmp_path):
+    paths = RunPaths(tmp_path)
+    backend = BackendConfig(name="or", url="https://openrouter.ai/api/v1", model="m", context_window=400000)
+    write_pi_config(paths, backend, 4321, 184320)
+    provider = json.loads((paths.agent_dir / "models.json").read_text())["providers"]["clangy"]
+    assert provider["compat"]["thinkingFormat"] == "openrouter"
+    assert provider["models"][0]["reasoning"] is True, "pi sends effort none only to reasoning models"
+    assert provider["models"][0]["contextWindow"] == 184320, "the limit caps a larger backend"
+    write_pi_config(paths, BACKEND, 4321, 184320)
+    model = json.loads((paths.agent_dir / "models.json").read_text())["providers"]["clangy"]["models"][0]
+    assert model["contextWindow"] == 131072, "a smaller backend keeps its own"
 
 
 def test_reasoning_leaked_into_the_answer_is_cut():

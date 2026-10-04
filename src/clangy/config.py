@@ -25,17 +25,24 @@ class BackendConfig(BaseModel):
     context_window: int = 131072
     max_tokens: int = 4096
     thinking: str = "off"
+    """pi thinking level. On OpenRouter it becomes the `reasoning` effort, `off` turns reasoning off."""
     compat: dict[str, Any] = Field(default_factory=dict)
     prompt_tps: float = 300.0
     gen_tps: float = 40.0
     extra_body: dict[str, Any] = Field(default_factory=dict)
-    """Merged into every chat completion request, e.g. OpenRouter's `models`, `reasoning` and `provider`."""
+    """Merged into every chat completion request, e.g. OpenRouter's `models` and `provider`."""
     first_byte_timeout: float | None = None
     """A request fails if no data arrives for this long. Not for llama.cpp, it's silent while reading a prompt."""
     stall_timeout: float | None = None
     """A request fails if its stream stops for this long after the first data."""
     cooldown: float = 60.0
     """openai kind: a failed backend gets new runs again after this long, or after the Retry-After it sent."""
+
+    @model_validator(mode="after")
+    def _check(self) -> "BackendConfig":
+        if "reasoning" in self.extra_body:
+            raise ValueError(f"backend {self.name}: set thinking instead of extra_body.reasoning")
+        return self
 
     @property
     def root_url(self) -> str:
@@ -97,6 +104,9 @@ class Config(BaseModel):
     discord_token: str = ""
     """Bot token; falls back to the DISCORD_TOKEN environment variable. Keep the file readable only by the bot."""
     backends: list[BackendConfig]
+    context_window: int | None = Field(None, gt=0)
+    """Caps the context on every backend. Defaults to the smallest backend context_window, so a conversation still
+    fits after it moves to another backend."""
     channels: list[ChannelConfig] = Field(default_factory=list)
     run_deadline: float = 600.0
     attachment_max_bytes: int = 25 * 1024**2
@@ -114,6 +124,9 @@ class Config(BaseModel):
     knowledge: dict[Game, list[KnowledgeSource]] = Field(default_factory=dict)
     mounts: list[KnowledgeSource] = Field(default_factory=list)
     """Like knowledge, but linked into every conversation whatever the game, e.g. the ecosystem's repos."""
+
+    def context_limit(self) -> int:
+        return self.context_window or min(b.context_window for b in self.backends)
 
     def channel(self, channel_id: int) -> ChannelConfig | None:
         return next((c for c in self.channels if c.id == channel_id), None)

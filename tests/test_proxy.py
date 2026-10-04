@@ -139,12 +139,12 @@ def cloud(url: str, **kwargs) -> BackendConfig:
 
 
 async def test_extra_body_and_key_from_config_reach_the_backend(backend, tmp_path):
-    extra = {"models": ["a/model:free", "b/model:free"], "reasoning": {"enabled": False}}
+    extra = {"models": ["a/model:free", "b/model:free"], "provider": {"data_collection": "allow"}}
     backend.answering_model = "b/model:free"
     run, _ = await chat_once(cloud(backend.url, api_key="sk-test", extra_body=extra), tmp_path)
     request = backend.requests[0]
     assert request["model"] == "a/model:free" and request["models"] == extra["models"]
-    assert request["reasoning"] == {"enabled": False}
+    assert request["provider"] == {"data_collection": "allow"}
     assert backend.headers[0]["Authorization"] == "Bearer sk-test"
     assert run.stats.per_request[0]["model"] == "b/model:free", "the model that answered"
 

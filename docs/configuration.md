@@ -8,6 +8,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 |---|---|---|
 | `data_dir` | required | Conversations, store and knowledge live here. |
 | `discord_token` | `""` | Bot token. Falls back to the `DISCORD_TOKEN` environment variable. Keep the config readable only by the bot's user. |
+| `context_window` | smallest backend `context_window` | Caps the context pi may use on every backend. A conversation can move to another backend between runs, so the default keeps it within the smallest one. |
 | `run_deadline` | `600` | Hard limit of a run after it leaves the queue. |
 | `attachment_max_bytes` | 25 MiB | Larger attachments aren't downloaded; the agent gets a note instead. |
 | `answer_max_bytes` | 10 MiB | Total size of the files attached to one answer. Keep it within the server's upload limit. Each file is limited to 5 MB regardless. |
@@ -44,11 +45,11 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `priority` | `1` | Lower is preferred. A backend gets runs only while every more preferred one has failed or is fully busy (`parallel` runs). The nas: OpenRouter free models 1, polaris 5, the paid `openai/gpt-6-luna` 8 and `deepseek/deepseek-v4.1-flash` 9 (cheaper per answer first). |
 | `kind` | `openai` | `llamacpp` enables slot pinning with `id_slot`, and a failed server gets runs again once its health check passes. Other kinds come back after `cooldown`. |
 | `slot_save` | `false` | llama.cpp: save and restore slot KV caches when conversations swap slots. Needs `--slot-save-path` on the server. |
-| `context_window`, `max_tokens` | `131072`, `4096` | Passed to pi. |
-| `thinking` | `off` | pi thinking level: `off`, `minimal`, `low`, `medium`, `high`. With `compat.thinkingFormat` set, `off` is sent to the server explicitly; Qwen otherwise thinks by default. For OpenRouter use `extra_body.reasoning` instead. |
+| `context_window`, `max_tokens` | `131072`, `4096` | Passed to pi. The top-level `context_window` caps the former. |
+| `thinking` | `off` | pi thinking level: `off`, `minimal`, `low`, `medium`, `high`. With `compat.thinkingFormat` set, `off` is sent to the server explicitly; Qwen otherwise thinks by default. An OpenRouter `url` sets `thinkingFormat = "openrouter"`: the level becomes OpenRouter's `reasoning` effort, and `off` sends `effort = "none"`. |
 | `compat` | `{}` | pi `compat` options for the model, e.g. `thinkingFormat = "qwen-chat-template"`. See pi's `docs/models.md`. |
 | `prompt_tps`, `gen_tps` | `300`, `40` | Starting speeds for the ETA. Measured speeds replace them (llama.cpp reports them; cloud APIs don't, so their values stay). |
-| `extra_body` | `{}` | Merged into every chat completion request, after `model`. Carries OpenRouter's `models`, `reasoning` and `provider`. |
+| `extra_body` | `{}` | Merged into every chat completion request, after `model`. Carries OpenRouter's `models` and `provider`. A `reasoning` key is refused; set `thinking` instead. |
 | `first_byte_timeout` | none | A request fails if no data arrives for this long. Only for cloud APIs: llama.cpp sends nothing while it reads a long prompt. Keep-alive comments don't count as data. |
 | `stall_timeout` | none | A request fails if its stream stops for this long after the first data. |
 | `cooldown` | `60` | Kinds other than `llamacpp`: how long a failed backend gets no runs, longer if it sent `Retry-After`. |
@@ -62,7 +63,7 @@ A request fails on a connection error, HTTP 401, 402, 403, 404, 408, 429 or 5xx 
 - Free models allow 20 requests a minute and 1000 a day per account. A run makes roughly 7 to 11 requests, hence `parallel = 2`. `GET https://openrouter.ai/api/v1/key` reports the day's use in `free_model_daily_requests`.
 - `extra_body.models` lists up to 3 models (more is a 400 error). OpenRouter tries them in order within one request, so a rate-limited model is answered by the next. An invalid model id fails every request. The model that answered goes into the metrics.
 - Free models are often rate limited upstream (429). `google/gemma-4-31b-it:free` was every time when tested, so it's last.
-- `reasoning` applies whichever model answers. Use it instead of `compat.thinkingFormat`, which only fits one model family. `reasoning = { enabled = false }` turns reasoning off. Keep it on: without reasoning, Qwen3.8-27B doesn't follow the setup checklist of the system prompt reliably, and `reasoning = { effort = "minimal" }` is enough. On llama.cpp the same goes for `thinking = "minimal"`.
+- `thinking` applies whichever model answers. Keep it at `minimal` for Qwen3.8-27B, on OpenRouter and on llama.cpp alike: without reasoning it doesn't follow the setup checklist of the system prompt reliably. Nemotron reasons briefly at `minimal` too. The paid models answer fine with `thinking = "off"`; `openai/gpt-6-luna` and `deepseek/deepseek-v4.1-flash` then use no reasoning tokens.
 - `nvidia/nemotron-3-super-120b-a12b:free` works only while the account allows free-model providers to use the prompts for training. With `provider = { data_collection = "deny" }` it returns 404. Everything sent to free models may be logged and trained on; that includes the support threads and the attachments the agent reads.
 - Paid models such as `openai/gpt-6-luna` and `deepseek/deepseek-v4.1-flash` need a key whose credit limit is above 0, otherwise they answer 403 "Key limit exceeded".
 - The key goes into `api_key` in the config (the nas: `~/clangy.toml`, mode 600) or into the variable named by `api_key_env`.
