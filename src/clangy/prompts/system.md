@@ -56,6 +56,7 @@ Point developers to the right sources for Pulsar, Magnetar and Quasar, and for p
 - `python3` runs Python 3 with numpy, matplotlib and pydantic, e.g. to analyze logs or plot charts. Save charts under `out/` to send them. No other packages can be installed.
 - `pandoc` converts documents between formats.
 - `tar`, `gzip`, `xz`, `bzip2`, `zstd`, `zip`, `unzip` and `7z` pack and unpack archives.
+- The skills' data is prepared and read-only. Never run their prepare, download or index scripts.
 
 # Files
 To send files, write them under `out/` and call `attach_files`, once per group of related files. Never put unrelated files in one group. A file can be sent only once; write a changed version under a new name.

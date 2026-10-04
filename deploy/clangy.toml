@@ -22,9 +22,14 @@ read_only = [
     "/home/clangy/.local/share/pi-node",
     "/home/clangy/.local/bin",
     "/home/clangy/.local/share/uv/python",
+    # graphify, for the code skills' graph queries (uv tool install graphifyy)
+    "/home/clangy/.local/share/uv/tools",
+    # SE1 workshop content, which the se-dev-mod skill reads in place
+    "/home/clangy/.steam/debian-installation/steamapps/workshop/content/244850",
 ]
-# The skills and their venvs are read-only: uv must use the venvs as they are, offline
-env = { UV_NO_SYNC = "1", UV_OFFLINE = "1", UV_PYTHON_DOWNLOADS = "never" }
+# The skills and their venvs are read-only: uv must use the venvs as they are, offline.
+# There's no game on the host: SE_GAME_ROOT only tells the se-dev-mod skill where the workshop folder is.
+env = { UV_NO_SYNC = "1", UV_OFFLINE = "1", UV_PYTHON_DOWNLOADS = "never", SE_GAME_ROOT = "/home/clangy/.steam/debian-installation/steamapps/common/SpaceEngineers" }
 # squid on the host with a domain allowlist; commands in the sandbox get HTTP(S)_PROXY pointing to it
 proxy = "127.0.0.1:3128"
 # Builds the sandboxes' shared Python environment (numpy, matplotlib, pydantic) with Debian's Python
@@ -167,6 +172,16 @@ path = "/home/clangy/repos"
 link = "knowledge/humanizer"
 path = "/home/clangy/repos/blader/humanizer"
 
+# Prepared data of the SE1 and SE2 skills. Their Data folders link here, and the skills are readable
+# in every conversation through repos/, so both are mounted whatever the game.
+[[mounts]]
+link = ".se-dev"
+path = "/home/clangy/.se-dev"
+
+[[mounts]]
+link = ".se2-dev"
+path = "/home/clangy/.se2-dev"
+
 [[knowledge.se1]]
 link = "knowledge/skills"
 path = "/home/clangy/repos/CometWorks/skills/skills"
@@ -175,10 +190,6 @@ path = "/home/clangy/repos/CometWorks/skills/skills"
 link = "knowledge/books"
 path = "/home/clangy/forgejo/se-dev-books/skills"
 
-[[knowledge.se1]]
-link = ".se-dev"
-path = "/home/clangy/.se-dev"
-
 [[knowledge.se2]]
 link = "knowledge/skills"
 path = "/home/clangy/repos/CometWorks/skills2/skills"
@@ -186,7 +197,3 @@ path = "/home/clangy/repos/CometWorks/skills2/skills"
 [[knowledge.se2]]
 link = "knowledge/books"
 path = "/home/clangy/forgejo/se2-dev-books/skills"
-
-[[knowledge.se2]]
-link = ".se2-dev"
-path = "/home/clangy/.se2-dev"

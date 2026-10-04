@@ -1,6 +1,11 @@
 #!/bin/sh
-# Knowledge is linked into the work folder; pi's grep (rg) and find (fd) must search through the links.
+# Knowledge is linked into the work folder: pi's grep (rg) and find (fd), and find in the shell, must search
+# through the links. find -H follows a link given as the start path, which a plain find doesn't descend into.
 here=$(dirname "$(readlink -f "$0")")
 PATH=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$here" | paste -sd: -)
 tool=$(basename "$0")
-exec "$(command -v "$tool")" --follow "$@"
+case $tool in
+find) follow=-H ;;
+*) follow=--follow ;;
+esac
+exec "$(command -v "$tool")" "$follow" "$@"

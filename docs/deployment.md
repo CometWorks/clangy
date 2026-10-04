@@ -31,19 +31,24 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 │   ├── python/<hash>/       the sandboxes' Python environment
 │   └── check/               scratch folders of `clangy check`
 ├── repos/                   public git clones, mounted as repos/
-│   ├── clone-or-pull        clones and pulls these and forgejo/ daily, then rebuilds the venvs
+│   ├── clone-or-pull        clones and pulls these and forgejo/ daily, rebuilds the venvs, syncs the hub plugins
 │   ├── CometWorks/skills/   SE1 skills, linked as knowledge/skills
 │   ├── CometWorks/skills2/  SE2 skills, linked as knowledge/skills
 │   ├── blader/humanizer/    writing skill, linked as knowledge/humanizer
-│   └── <owner>/<repo>/      ecosystem and plugin repositories
+│   ├── pulsar-se1-plugins/<owner>/<repo>/   PluginHub plugins at their registered commits
+│   ├── pulsar-se2-plugins/<owner>/<repo>/   PluginHub-SE2 plugins
+│   ├── magnetar-plugins/<owner>/<repo>/     MagnetarHub plugins
+│   └── <owner>/<repo>/      ecosystem repositories, and plugins that aren't in a hub
 ├── forgejo/                 private clones, kept out of the repos/ mount
 │   ├── se-dev-books/        SE1 books, linked as knowledge/books
 │   └── se2-dev-books/       SE2 books, linked as knowledge/books
-├── .se-dev/, .se2-dev/      data the skills expect in the home folder
+├── .se-dev/, .se2-dev/      the skills' prepared data; each skill's Data folder links here
+├── .steam/debian-installation/steamapps/workshop/content/244850/   SE1 workshop mods, for se-dev-mod
 ├── .ssh/                    config: one forgejo-<repo> host alias per deploy key
 ├── .pi/agent/bin/pi         pi, from its own installer
 ├── .local/share/pi-node/    pi's Node.js
-└── .local/bin/uv            uv, for deploys and the sandboxes' Python environment
+├── .local/share/uv/tools/   graphify, for the code skills' graph queries
+└── .local/bin/              uv (deploys, the sandboxes' Python environment) and graphify
 ```
 
 Folders of the clangy user that Clangy doesn't use are left out.
@@ -134,9 +139,17 @@ cd ~/clangy && PATH=~/.pi/agent/bin:~/.local/share/pi-node/current/bin:$PATH ~/.
 
 ## Knowledge
 
-The knowledge sources are folders used in place, see `[[knowledge.*]]` in `~/clangy.toml`. The skills are the clones `~/repos/CometWorks/skills` and `~/repos/CometWorks/skills2`, which `~/repos/clone-or-pull` pulls daily with the other repositories. The books are the private clones `~/forgejo/se-dev-books` and `~/forgejo/se2-dev-books`. They stay out of `~/repos`, because that is mounted into every conversation, and the books may only show up as `knowledge/books` for the conversation's game. `clone-or-pull` pulls them too, each with its own read-only Forgejo deploy key: `~/.ssh/config` has a `forgejo-<repo>` host alias per key, and the clones' `origin` uses it (`forgejo-se-dev-books:CometWorks/se-dev-books.git`). The prepared data (`~/.se-dev`, `~/.se2-dev`) are plain folders. Git sources (`url`) would be mirrored by `clangy sync-knowledge`, run daily by a timer or cron job; the nas uses none.
+The knowledge sources are folders used in place, see `[[knowledge.*]]` in `~/clangy.toml`. The skills are the clones `~/repos/CometWorks/skills` and `~/repos/CometWorks/skills2`, which `~/repos/clone-or-pull` pulls daily with the other repositories. The books are the private clones `~/forgejo/se-dev-books` and `~/forgejo/se2-dev-books`. They stay out of `~/repos`, because that is mounted into every conversation, and the books may only show up as `knowledge/books` for the conversation's game. `clone-or-pull` pulls them too, each with its own read-only Forgejo deploy key: `~/.ssh/config` has a `forgejo-<repo>` host alias per key, and the clones' `origin` uses it (`forgejo-se-dev-books:CometWorks/se-dev-books.git`). Git sources (`url`) would be mirrored by `clangy sync-knowledge`, run daily by a timer or cron job; the nas uses none.
 
-The code skills run their scripts with `uv run` from their own `.venv`. In the sandbox the skills are read-only and offline, so `sandbox.env` makes uv use the venvs as they are (`UV_NO_SYNC`, `UV_OFFLINE`), and the sandbox may read uv's Python installs (the SE1 skills pin Python 3.11). `~/repos/clone-or-pull` builds the venvs after every pull, as `clangy` and outside the sandbox, with `uv sync --frozen` in each skill folder and each `~/forgejo` clone that has a `pyproject.toml`. After moving a skills clone, delete its `.venv` folders first: a venv holds absolute paths, and `uv sync` doesn't rewrite them. Venvs copied from another machine don't work, they point to that machine's Python. Searches work from the prepared indexes; preparing, indexing, downloading and the mod and script listings (which need the installed game) don't work in the sandbox.
+The skills keep their prepared data (decompiled code, indexes, graphs) in `~/.se-dev` and `~/.se2-dev`, and each skill's `Data` folder is a symlink to its part, e.g. `skills/se-dev-game-code/Data` to `~/.se-dev/game-code`. Both folders are `[[mounts]]`, linked into every conversation, because both games' skills are readable through `repos/` and their `Data` links must resolve whatever the game. The sandbox follows the symlinks, since their targets are mounted too.
+
+The code skills query their graphs with `graphify`, installed with `uv tool install --python 3.12 'graphifyy[leiden]'`. Its tool folder `~/.local/share/uv/tools` is in `sandbox.read_only`, and its command is in `~/.local/bin`, which is on the sandbox's `PATH`.
+
+The se-dev-mod skill reads workshop mods in place. They are in the Steam layout under `~/.steam`, copied from a machine that has the game, and `sandbox.read_only` has the workshop folder. There is no game on the host, so `SE_GAME_ROOT` in `sandbox.env` names where it would be, which is how the skill finds the workshop folder next to it. The paths in the skill's `Data/mods.json` must point at this host's folders. The index stores files as `<workshop id>/<path under Data/Scripts>`.
+
+The plugin skills get every hub plugin's source without downloading anything. `deploy/sync-hub-plugins.py`, run by `clone-or-pull` after the skills are pulled, pulls the hub registries in the skills' data (PluginHub and MagnetarHub for SE1, PluginHub-SE2 for SE2). It clones each GitHub plugin they list into `~/repos/pulsar-se1-plugins`, `~/repos/magnetar-plugins` or `~/repos/pulsar-se2-plugins`, checked out at the commit the hub registers. Then it links the skill's `Data/Sources/<repo>` to that clone, so the skill lists the plugin as downloaded, and rebuilds the skill's code index when anything changed. A repository listed several times, in one hub (e.g. per Pulsar flavor) or in two, is checked out at its first entry's commit, and two repositories with the same name keep the first one's link. The SE2 plugin skill also keeps a record of its downloads in `Data/plugins.json`, and offers to download whatever isn't in it, so the script records its clones there with the skill's own `plugin_registry.update_plugin`. `clone-or-pull` doesn't list the plugins that are in a hub, so each has one working copy, in its hub's folder.
+
+The code skills run their scripts with `uv run` from their own `.venv`. In the sandbox the skills are read-only and offline, so `sandbox.env` makes uv use the venvs as they are (`UV_NO_SYNC`, `UV_OFFLINE`), and the sandbox may read uv's Python installs (the SE1 skills pin Python 3.11). `~/repos/clone-or-pull` builds the venvs after every pull, as `clangy` and outside the sandbox, with `uv sync --frozen` in each skill folder and each `~/forgejo` clone that has a `pyproject.toml`. After moving a skills clone, delete its `.venv` folders first: a venv holds absolute paths, and `uv sync` doesn't rewrite them. Venvs copied from another machine don't work, they point to that machine's Python. Searches and graph queries work from the prepared indexes and graphs; preparing, indexing, downloading and refreshing the mod and script listings (which need the installed game) don't work in the sandbox.
 
 The humanizer skill comes from `~/repos/blader/humanizer`, which `~/repos/clone-or-pull` keeps up to date. It is a `[[mounts]]` entry linked as `knowledge/humanizer`, so it is there before the game is known; the system prompt tells Clangy to read it for any answer longer than a sentence.
 

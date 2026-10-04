@@ -22,7 +22,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 | `files.py` | Files the agent sends: validation, at-most-once sending, ZIP grouping. |
 | `text.py` | Discord texts: answer splitting, footer, progress and error messages. |
 | `pi/clangy.ts` | pi extension loaded in the sandbox: replaces the system prompt, bridges the host and proxy sockets, defines the host tools. |
-| `sandbox-bin/` | `rg` and `fd` wrappers that follow links. |
+| `sandbox-bin/` | `rg`, `fd` and `find` wrappers that follow links. |
 | `workspace/` | `pyproject.toml` and `uv.lock` of the sandboxes' shared Python environment, see Sandbox. |
 | `prompts/system.md`, `guide/*.md` | The system prompt, and the guide files the agent reads on demand. |
 | `templates/` | The workspace's `AGENTS.md` and ticket template, written when missing. |
@@ -142,9 +142,9 @@ When the game is known, the host note lists the skills under `knowledge/`: every
 
 A mount is linked from the first run, before the game is known. The nas mounts the humanizer skill as `knowledge/humanizer`, and the system prompt has the model read it before any answer longer than one sentence.
 
-The knowledge is linked into the work folder, and ripgrep and fd don't follow links by default, so `sandbox-bin/rg` and `sandbox-bin/fd`, first on the sandbox's `PATH`, add `--follow` for pi's grep and find.
+The knowledge is linked into the work folder, and ripgrep and fd don't follow links by default, so `sandbox-bin/rg` and `sandbox-bin/fd`, first on the sandbox's `PATH`, add `--follow` for pi's grep and find. `sandbox-bin/find` adds `-H` for the shell's find, which otherwise doesn't descend into a link given as the start path, such as a plugin skill's `Data/Sources/<repo>`.
 
-Each configured knowledge source of the game becomes a link in the work folder: `knowledge/skills`, `knowledge/books`, and the prepared data the skills expect in the home folder (`.se-dev`, `.se2-dev`). The links are resolved when each run starts and the other game's links are removed. The firejail whitelist contains only that game's targets.
+Each configured knowledge source of the game becomes a link in the work folder: `knowledge/skills`, `knowledge/books`, and prepared data the skills expect in the home folder. The links are resolved when each run starts and the other game's links are removed. The firejail whitelist contains only that game's targets, plus the mounts. Data that must be readable whatever the game, like the skills' data when every conversation can reach both games' skills through `repos/`, goes into `[[mounts]]` instead.
 
 Sources are folders used in place (the nas setup) or git repositories. `clangy sync-knowledge` (daily) keeps mirrors of the repositories. When any HEAD changed, it exports all of them into a new `releases/<timestamp>` folder and swaps the `current` symlink with an atomic rename, keeping the current and the previous release. Since links resolve per run, a run keeps one snapshot even if the sync swaps trees meanwhile.
 
