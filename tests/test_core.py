@@ -564,7 +564,7 @@ async def test_edits_and_deletions_apply_to_the_next_run(bot, chat):
         "Alice edited their message from 2026-10-03 12:00 UTC, it now reads: Original question, now with details"
         in second
     )
-    assert 'Bob deleted their message from 2026-10-03 12:00 UTC ("fixed text"). Disregard it.' in second
+    assert 'Bob deleted their message from 2026-10-03 12:00 UTC ("fixed text"). Disregard only that message' in second
     third_notes = bot.conversations[1033].host_notes
     assert third_notes == [], "notes are delivered once"
 
