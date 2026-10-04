@@ -182,12 +182,16 @@ class FakeChat:
         self.threads.append((channel_id, message_id, name))
         return message_id
 
-    async def history(self, channel_id: int, before_id: int, limit: int, after) -> list:
+    async def history(self, channel_id: int, before_id: int | None, limit: int | None, after) -> list:
         self.history_calls.append((channel_id, before_id, limit, after))
         if channel_id in self.unreadable:
             raise HistoryUnavailable(f"no access to {channel_id}")
-        messages = [m for m in self.channel_history.get(channel_id, []) if before_id is None or m.id < before_id]
-        return messages[-limit:]
+        messages = [
+            m
+            for m in self.channel_history.get(channel_id, [])
+            if (before_id is None or m.id < before_id) and (after is None or m.created >= after)
+        ]
+        return messages[-limit:] if limit else messages
 
     async def download(self, attachment: Attachment, path: Path) -> None:
         if attachment.url not in self.files:

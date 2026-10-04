@@ -18,6 +18,8 @@ def make_message(channel, author_id: int = 5, mentions=()) -> MagicMock:
     message.mentions = list(mentions)
     attachment = MagicMock(id=7, filename="info.log", size=10, url="https://cdn/info.log")
     message.attachments = [attachment]
+    message.type = discord.MessageType.default
+    message.reference = None
     return message
 
 
@@ -37,6 +39,22 @@ def test_channel_message_from_self():
     msg = incoming(make_message(channel), bot)
     assert (msg.channel_id, msg.parent_id, msg.starts_thread) == (40, None, False)
     assert msg.from_self and not msg.mentions_bot
+
+
+def test_replies_and_thread_starters_carry_the_replied_message():
+    bot = MagicMock(spec=discord.ClientUser, id=99)
+    channel = MagicMock(spec=discord.TextChannel, id=40)
+    for kind in (discord.MessageType.reply, discord.MessageType.thread_starter_message):
+        message = make_message(channel)
+        message.type = kind
+        message.reference = MagicMock(resolved=make_message(channel, author_id=6))
+        message.reference.resolved.id = 41
+        assert incoming(message, bot).replied_to.id == 41
+    deleted = make_message(channel)
+    deleted.type = discord.MessageType.reply
+    deleted.reference = MagicMock(resolved=MagicMock(spec=discord.DeletedReferencedMessage))
+    assert incoming(deleted, bot).replied_to is None
+    assert incoming(make_message(channel), bot).replied_to is None
 
 
 async def test_edit_events_skip_own_and_unknown_messages():

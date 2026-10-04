@@ -53,7 +53,7 @@ class DiscordChat:
         return thread.id
 
     async def history(
-        self, channel_id: int, before_id: int | None, limit: int, after: datetime
+        self, channel_id: int, before_id: int | None, limit: int | None, after: datetime | None
     ) -> list[IncomingMessage]:
         channel = await self._channel(channel_id)
         assert self.client.user is not None
@@ -76,8 +76,14 @@ class DiscordChat:
                     f.write(chunk)
 
 
+REPLY_TYPES = (discord.MessageType.reply, discord.MessageType.thread_starter_message)
+
+
 def incoming(message: discord.Message, bot: discord.ClientUser) -> IncomingMessage:
     channel = message.channel
+    # Discord sends the replied message along, one level deep. A thread started from a channel message opens
+    # with an empty message of its own that points to it.
+    replied = message.reference.resolved if message.type in REPLY_TYPES and message.reference else None
     in_thread = isinstance(channel, discord.Thread)
     return IncomingMessage(
         id=message.id,
@@ -93,6 +99,7 @@ def incoming(message: discord.Message, bot: discord.ClientUser) -> IncomingMessa
         starts_thread=in_thread and message.id == channel.id,
         thread_name=channel.name if in_thread else "",
         attachments=[Attachment(a.id, a.filename, a.size, a.url) for a in message.attachments],
+        replied_to=incoming(replied, bot) if isinstance(replied, discord.Message) else None,
     )
 
 

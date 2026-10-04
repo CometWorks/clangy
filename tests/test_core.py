@@ -659,11 +659,71 @@ async def test_mention_in_an_unknown_thread_starts_with_its_history(bot, chat):
     ]
     await bot.on_message(message(1040, "@Clangy any idea?", parent_id=QUIET_FORUM, id=1043, mentions_bot=True))
     await bot.wait_idle()
-    assert chat.history_calls[0][:2] == (1040, 1043)
+    assert chat.history_calls == [(1040, 1043, None, None)], "all of the thread, however old and long"
     prompt = bot.agent.prompts[0]
     assert prompt.index("Carol: Old forum post") < prompt.index("Carol: Still broken") < prompt.index("any idea?")
     assert "v1 answer" not in prompt
     assert chat.in_channel(1040)[0].current.startswith("Default answer.")
+
+
+async def test_thread_started_from_a_channel_message_brings_that_message(bot, chat):
+    starter = message(MENTION, "Is there a plugin for this?", id=2000, author="Bob")
+    chat.channel_history[2000] = [
+        message(2000, "", parent_id=MENTION, id=2001, author="Bob", replied_to=starter),
+        message(2000, "Me too", parent_id=MENTION, id=2002),
+    ]
+    await bot.on_message(message(2000, "@Clangy do you know?", parent_id=MENTION, id=2003, mentions_bot=True))
+    await bot.wait_idle()
+    lines = [line for line in bot.agent.prompts[0].splitlines() if not line.startswith("[host]")]
+    assert lines == ["Bob: Is there a plugin for this?", "Alice: Me too", "Alice: @Clangy do you know?"]
+
+
+async def test_replies_bring_older_messages_along(bot, chat):
+    def old(text: str, message_id: int, author: str) -> IncomingMessage:
+        m = message(MENTION, text, id=message_id, author=author)
+        m.created -= timedelta(days=1)
+        return m
+
+    plugin, crash = old("Which plugin hides the HUD?", 500, "Bob"), old("My game crashes on load", 501, "Carol")
+    own = old("an earlier answer", 502, "Clangy")
+    own.from_self = True
+    chat.channel_history[MENTION] = [
+        old("Too old and nobody replies to it", 499, "Dave"),
+        message(MENTION, "That one, Hide HUD", id=620, author="Dave", replied_to=plugin),
+        message(MENTION, "thanks", id=621, author="Bob", replied_to=own),
+    ]
+    await bot.on_message(message(MENTION, "@Clangy still?", id=622, mentions_bot=True, replied_to=crash))
+    await bot.wait_idle()
+    lines = [line for line in bot.agent.prompts[0].splitlines() if not line.startswith("[host]")]
+    assert lines == [
+        "Bob: Which plugin hides the HUD?",
+        "Carol: My game crashes on load",
+        "Dave (reply to Bob): That one, Hide HUD",
+        "Bob: thanks",  # Clangy's own messages aren't cached, nor brought along
+        "Alice (reply to Carol): @Clangy still?",
+    ]
+
+
+async def test_known_thread_reads_what_was_posted_while_offline(config, chat):
+    first = Clangy(config, chat, run_agent=FakeAgent())
+    await first.on_message(forum_post(QUIET_FORUM, 1045, "Question"))
+    await first.close()
+    chat.channel_history[1045] = [
+        forum_post(QUIET_FORUM, 1045, "Question"),
+        message(1045, "Missed", parent_id=QUIET_FORUM, id=1046, author="Bob"),
+        message(1045, "own answer", parent_id=QUIET_FORUM, id=1047, from_self=True),
+        message(1045, "Missed too", parent_id=QUIET_FORUM, id=1048, author="Bob"),
+    ]
+    agent = FakeAgent()
+    second = Clangy(config, chat, run_agent=agent)
+    await second.load()
+    await second.on_message(message(1045, "Any news?", parent_id=QUIET_FORUM, id=1049))
+    await second.on_message(message(1045, "@Clangy hello?", parent_id=QUIET_FORUM, id=1050, mentions_bot=True))
+    await second.wait_idle()
+    assert chat.history_calls == [(1045, 1049, None, datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc))]
+    lines = [line for line in agent.prompts[0].splitlines() if not line.startswith("[host]")]
+    assert lines == ["Alice: Question", "Bob: Missed", "Bob: Missed too", "Alice: Any news?", "Alice: @Clangy hello?"]
+    await second.close()
 
 
 async def test_unknown_threads_without_mention_stay_ignored(bot, chat):

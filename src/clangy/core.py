@@ -52,9 +52,10 @@ class Chat(Protocol):
     async def create_thread(self, channel_id: int, message_id: int, name: str) -> int: ...
 
     async def history(
-        self, channel_id: int, before_id: int | None, limit: int, after: datetime
+        self, channel_id: int, before_id: int | None, limit: int | None, after: datetime | None
     ) -> list[IncomingMessage]:
-        """Channel messages after a time and before a message (or now), oldest first. Raises HistoryUnavailable."""
+        """The newest `limit` (None: all) channel messages after a time (None: from the start) and before a message
+        (None: now), oldest first. Raises HistoryUnavailable."""
         ...
 
     async def download(self, attachment: Attachment, path: Path) -> None: ...
@@ -68,6 +69,8 @@ class PendingMessage(BaseModel):
     attachments: list[str] = Field(default_factory=list)
     reference: bool = False
     """Earlier chat that came along with a mention as context, not something to answer."""
+    reply_to: str = ""
+    """Author of the message this one replies to."""
 
 
 class KnownMessage(BaseModel):
@@ -154,6 +157,11 @@ def proxy_relay(sandbox: SandboxConfig, paths: RunPaths) -> TcpRelay | contextli
     return TcpRelay(paths.proxy_socket, sandbox.proxy) if sandbox.proxy else contextlib.nullcontext()
 
 
+def said_something(msg: IncomingMessage) -> bool:
+    """False for the empty message a thread started from a channel message opens with."""
+    return bool(msg.text or msg.attachments)
+
+
 def human_size(size: int) -> str:
     return f"{size / 1024**2:.1f} MB" if size >= 1024**2 else f"{max(1, size // 1024)} KB"
 
@@ -173,6 +181,8 @@ class Clangy:
         """Since when the cache has every message of Clangy's channels and their threads."""
         self._covered_since: dict[int, datetime] = {}
         """Channels and threads whose cache reaches further back, from catching up or fetching."""
+        self._caught_up: set[int] = set()
+        """Conversations that have every message since the last (re)connect."""
         self._message_threads: dict[int, int] = {}
         """Message id to conversation, for edits and deletions."""
         self._in_run: dict[int, set[int]] = {}
@@ -251,6 +261,8 @@ class Clangy:
         channel = self.config.channel(conv.channel_id) if conv else None
         if conv is None or channel is None:
             return
+        if not new:
+            await self._read_missed(conv, channel, msg)
         if channel.mode != "mention" and msg.thread_name and msg.thread_name != conv.title:
             # A forum post's title is often the question itself
             renamed = " is now" if conv.title else ""
@@ -287,9 +299,24 @@ class Clangy:
             thread_id = await self.chat.create_thread(msg.channel_id, msg.id, name)
             conv = self._new_conversation(thread_id, channel, msg.guild_id)
         for message in earlier:
-            if not message.from_self:
-                await self._add_message(conv, channel, message, reference=True)
+            await self._add_message(conv, channel, message, reference=True)
         return conv
+
+    async def _read_missed(self, conv: Conversation, channel: ChannelConfig, msg: IncomingMessage) -> None:
+        """Queues what was posted in a known thread while Clangy was offline, before the message that just came in."""
+        if conv.thread_id in self._caught_up:
+            return
+        # Before the await, so messages arriving meanwhile don't read the same again
+        self._caught_up.add(conv.thread_id)
+        newest = max((m.created for m in conv.known.values()), default=None)
+        try:
+            missed = await self.chat.history(conv.thread_id, msg.id, None, newest)
+        except HistoryUnavailable as e:
+            log.warning("Couldn't read the messages missed in thread %s: %s", conv.thread_id, e)
+            return
+        for message in missed:
+            if not message.from_self and message.id not in conv.known and said_something(message):
+                await self._add_message(conv, channel, message)
 
     def _watched(self, msg: IncomingMessage) -> bool:
         """Whether the message is in one of Clangy's channels or their threads."""
@@ -302,11 +329,18 @@ class Clangy:
         return min(midnight, now - timedelta(hours=channel.history_hours))
 
     async def _history(self, channel: ChannelConfig, msg: IncomingMessage) -> list[IncomingMessage]:
-        """The chat before a mention, from the cache; Discord fills in what the cache doesn't cover yet."""
-        start = self.context_start(channel, msg.created)
-        if start < self._covered_since.get(msg.channel_id, self._live_since):
-            await self._fetch_history(msg.channel_id, msg.id, channel.history_messages, start)
-        return self.cache.before(msg.channel_id, msg.id, start, channel.history_messages)
+        """The chat before a mention, plus the older messages it replies to. A thread is one conversation, so that's
+        all of it, read from Discord. A channel's comes from the cache, and Discord fills in what isn't cached yet."""
+        if msg.parent_id is not None:
+            earlier = [m for m in await self.chat.history(msg.channel_id, msg.id, None, None) if not m.from_self]
+        else:
+            start = self.context_start(channel, msg.created)
+            if start < self._covered_since.get(msg.channel_id, self._live_since):
+                await self._fetch_history(msg.channel_id, msg.id, channel.history_messages, start)
+            earlier = self.cache.before(msg.channel_id, msg.id, start, channel.history_messages)
+        ids = {m.id for m in earlier} | {msg.id}
+        replied = {r.id: r for m in [*earlier, msg] if (r := m.replied_to) and r.id not in ids and not r.from_self}
+        return [m for m in sorted([*replied.values(), *earlier], key=lambda m: m.created) if said_something(m)]
 
     async def _fetch_history(self, channel_id: int, before_id: int | None, limit: int, start: datetime) -> None:
         for message in await self.chat.history(channel_id, before_id, limit, start):
@@ -319,6 +353,7 @@ class Clangy:
         now = datetime.now(timezone.utc)
         self._live_since = now
         self._covered_since.clear()
+        self._caught_up.clear()
         self.cache.prune(now - timedelta(days=2))
         for channel in self.config.channels:
             if channel.mode != "mention":
@@ -414,6 +449,7 @@ class Clangy:
 
     def _new_conversation(self, thread_id: int, channel: ChannelConfig, guild_id: int) -> Conversation:
         conv = Conversation(thread_id=thread_id, channel_id=channel.id, guild_id=guild_id, game=channel.game)
+        self._caught_up.add(thread_id)
         if channel.game:
             conv.host_notes.append(self._knowledge_note(channel.game))
         self.conversations[thread_id] = conv
@@ -437,7 +473,10 @@ class Clangy:
                 notes.append(f"{attachment.filename} could not be downloaded")
                 continue
             notes.append(f"attachments/{name} ({human_size(attachment.size)})")
-        return PendingMessage(id=msg.id, author=msg.author, text=msg.text, created=msg.created, attachments=notes)
+        reply_to = msg.replied_to.author if msg.replied_to else ""
+        return PendingMessage(
+            id=msg.id, author=msg.author, text=msg.text, created=msg.created, attachments=notes, reply_to=reply_to
+        )
 
     def _record(self, conv: Conversation, author: str, when: datetime, text: str, title: str = "") -> None:
         entry = f"**{author}** ({when:%Y-%m-%d %H:%M} UTC): {text}"
@@ -688,7 +727,8 @@ class Clangy:
     def _message_lines(messages: list[PendingMessage]) -> list[str]:
         lines = []
         for m in messages:
-            lines.append(f"{m.author}: {m.text}")
+            reply = f" (reply to {m.reply_to})" if m.reply_to else ""
+            lines.append(f"{m.author}{reply}: {m.text}")
             lines += [f"[host] Attachment from {m.author}: {a}" for a in m.attachments]
         return lines
 
