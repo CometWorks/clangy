@@ -1,6 +1,6 @@
 # Configuration
 
-Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.toml` shows a complete one. Durations are in seconds.
+Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.toml` shows a working one; the tables below list every key. Durations are in seconds.
 
 ## Top level
 
