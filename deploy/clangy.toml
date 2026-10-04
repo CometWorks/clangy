@@ -2,6 +2,7 @@
 # deploy.sh never overwrites it.
 data_dir = "/home/clangy/data"
 discord_token = ""
+run_deadline = 900.0
 
 [sandbox]
 firejail = true

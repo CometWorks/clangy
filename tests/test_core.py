@@ -683,11 +683,10 @@ async def test_no_answer_without_context(bot, chat):
 
 
 async def test_context_comes_from_the_cache_after_catching_up(bot, chat):
-    now = datetime.now(timezone.utc)
-
     def recent(text: str, message_id: int, minutes_ago: int, **kwargs) -> IncomingMessage:
+        # Timestamps at creation time, like real messages, which arrive after the catch-up
         m = message(MENTION, text, id=message_id, **kwargs)
-        m.created = now - timedelta(minutes=minutes_ago)
+        m.created = datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)
         return m
 
     chat.channel_history[MENTION] = [recent("before the restart", 701, 30), recent("bot", 702, 29, from_self=True)]
