@@ -173,7 +173,7 @@ path = "/home/clangy/repos/CometWorks/skills/skills"
 
 [[knowledge.se1]]
 link = "knowledge/books"
-path = "/home/clangy/se-dev-books/skills"
+path = "/home/clangy/forgejo/se-dev-books/skills"
 
 [[knowledge.se1]]
 link = ".se-dev"
@@ -185,7 +185,7 @@ path = "/home/clangy/repos/CometWorks/skills2/skills"
 
 [[knowledge.se2]]
 link = "knowledge/books"
-path = "/home/clangy/se2-dev-books/skills"
+path = "/home/clangy/forgejo/se2-dev-books/skills"
 
 [[knowledge.se2]]
 link = ".se2-dev"
