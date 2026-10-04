@@ -4,18 +4,44 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 
 ## Layout on the host
 
-| Path | What |
-|---|---|
-| `~/clangy/` | The working copy, replaced by every deploy. Its `.venv` is installed there with Python 3.13 from Debian. |
-| `~/clangy.toml` | The config, mode 600 since it holds the Discord token. `deploy/clangy.toml` is its template; deploys never touch it. |
-| `~/data/` | Conversations, records, metrics, the message cache, the sandboxes' Python environment (`python/`). |
-| `~/tickets/`, `~/notes/`, `~/plans/`, `~/AGENTS.md` | The workspace (`workspace_dir`): what Clangy files for the developers, and the rules for the agents working on it. See design.md, Store. |
-| `~/skills`, `~/skills2`, `~/se-dev-books`, `~/se2-dev-books`, `~/.se-dev`, `~/.se2-dev` | The prepared knowledge, used in place. |
-| `~/repos/` | Ecosystem and plugin repositories, mounted read-only into every conversation as `repos`; `~/repos/clone-or-pull` updates them daily. |
-| `~/.pi/agent/bin/pi` | pi, installed by its own installer, with Node.js under `~/.local/share/pi-node`. |
-| `~/.local/bin/uv` | uv: deploys, and the sandboxes' Python environment (`sandbox.uv`), which hardlinks the packages from uv's cache in `~/.cache/uv`. |
+```
+/home/clangy/                workspace_dir: the home folder is the workspace
+├── clangy/                  working copy, replaced by every deploy; .venv with Debian's Python 3.13
+├── clangy.toml              the config, from deploy/clangy.toml; mode 600, deploys never touch it
+├── AGENTS.md                rules for agents working in the workspace, written once from templates/
+├── tickets/                 problem reports for the developers, see design.md, Store
+│   ├── Template.md          written once from templates/
+│   ├── T-0001.md
+│   ├── completed/
+│   └── canceled/
+├── notes/
+│   ├── N-0001.md            a note without files
+│   └── N-0002/              a note with files, e.g. a ticket's logs
+│       ├── NOTE.md
+│       └── <files>
+├── plans/                   like notes, P-0001.md or P-0001/PLAN.md
+├── data/                    data_dir
+│   ├── conversations/<thread id>/
+│   │   ├── state.json
+│   │   ├── metrics.jsonl    kept after the conversation expires
+│   │   ├── files/           received/, sent/<run>/, outbox/
+│   │   └── work/            the sandbox's work folder
+│   ├── records/<thread id>.md
+│   ├── messages.sqlite      message cache
+│   ├── python/<hash>/       the sandboxes' Python environment
+│   └── check/               scratch folders of `clangy check`
+├── repos/                   reference repositories, mounted as repos/; clone-or-pull updates them daily
+├── skills/, skills2/        SE1 and SE2 skills, used in place
+├── se-dev-books/, se2-dev-books/
+├── .se-dev/, .se2-dev/      data the skills expect in the home folder
+├── .pi/agent/bin/pi         pi, from its own installer
+├── .local/share/pi-node/    pi's Node.js
+└── .local/bin/uv            uv, for deploys and the sandboxes' Python environment
+```
 
-The sandbox may read pi's `bin` and `install` folders and its Node.js, but not the rest of `~/.pi/agent` (`auth.json`, pi's own sessions). Lingering is enabled for `clangy`, so its user services run without a login.
+Folders of the clangy user that Clangy doesn't use are left out.
+
+uv hardlinks the sandboxes' packages from its cache in `~/.cache/uv`. The sandbox may read pi's `bin` and `install` folders and its Node.js, but not the rest of `~/.pi/agent` (`auth.json`, pi's own sessions). Lingering is enabled for `clangy`, so its user services run without a login.
 
 ## Requirements
 
