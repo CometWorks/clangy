@@ -1035,3 +1035,29 @@ async def test_cache_never_outlives_the_retention(bot, config, monkeypatch):
     bot.expire()
     now = datetime.now(timezone.utc)
     assert [round((now - when).total_seconds() / 3600) for when in pruned] == [48, 12]
+
+
+async def test_expired_thread_starts_over_from_discord_on_a_mention(bot, chat, config):
+    await bot.on_message(forum_post(SUPPORT, 1147, "Old question", author="Carol"))
+    await bot.wait_idle()
+    old = time.time() - 41 * 86400
+    os.utime(config.data_dir / "conversations" / "1147" / "state.json", (old, old))
+    chat.channel_history[1147] = [
+        message(1147, "Old question", parent_id=SUPPORT, id=1147, author="Carol"),
+        message(1147, "Default answer.", parent_id=SUPPORT, id=1148, from_self=True),
+        message(1147, "Back again", parent_id=SUPPORT, id=1149, author="Carol"),
+    ]
+
+    agent = FakeAgent()
+    second = Clangy(config, chat, run_agent=agent)
+    await second.load()
+    await second.on_message(chat.channel_history[1147][-1])
+    await second.wait_idle()
+    assert 1147 not in second.conversations and agent.specs == [], "only a mention brings it back"
+    await second.on_message(message(1147, "@Clangy still broken", parent_id=SUPPORT, id=1150, mentions_bot=True))
+    await second.wait_idle()
+    prompt = agent.prompts[0]
+    assert prompt.index("Carol: Old question") < prompt.index("Carol: Back again") < prompt.index("still broken")
+    assert "Default answer." not in prompt, "Clangy's own earlier answers aren't part of the history"
+    assert chat.in_channel(1147)[-1].current.startswith("Default answer.")
+    await second.close()
