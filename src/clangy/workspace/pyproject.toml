@@ -1,0 +1,10 @@
+# The Python environment of every conversation's work folder, installed by the host with uv.
+# After changing it, run `uv lock` here and commit both files.
+[project]
+name = "workspace"
+version = "0"
+requires-python = ">=3.11"
+dependencies = ["numpy", "matplotlib", "pydantic"]
+
+[tool.uv]
+package = false

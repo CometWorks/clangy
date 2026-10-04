@@ -1,0 +1,16 @@
+[Unit]
+Description=Clangy v2, the Pulsar Discord support bot
+
+[Service]
+WorkingDirectory=%h/clangy
+ExecStart=%h/clangy/.venv/bin/clangy --config %h/clangy.toml run
+Restart=on-failure
+RestartSec=60
+# 78: the sandbox or the setup is broken, restarting won't help
+RestartPreventExitStatus=78
+# Caps the bot and all its sandboxes together, firejail's address space limit breaks Node.js
+MemoryMax=16G
+TasksMax=1024
+
+[Install]
+WantedBy=default.target

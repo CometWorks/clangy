@@ -1,0 +1,135 @@
+# Copy to config.toml and adjust. See docs/configuration.md.
+
+data_dir = "/srv/clangy"
+discord_token = ""
+run_deadline = 600.0
+attachment_max_bytes = 26214400
+answer_max_bytes = 10485760
+progress_interval = 60.0
+health_interval = 30.0
+max_retries = 3
+switch_margin = 60.0
+
+[sandbox]
+firejail = true
+pi_command = ["pi"]
+path = "/opt/node/bin:/usr/bin:/bin"
+read_only = ["/opt/node"]
+
+[[backends]]
+name = "r9700"
+url = "http://192.168.1.20:8080/v1"
+model = "qwen3.8-27b-q5"
+kind = "llamacpp"
+priority = 2
+parallel = 2
+slot_save = true
+context_window = 131072
+max_tokens = 4096
+thinking = "low"
+compat = { thinkingFormat = "qwen-chat-template" }
+prompt_tps = 300.0
+gen_tps = 40.0
+
+# OpenRouter's free models as a second backend. The key goes into api_key (keep this file mode 600) or the
+# environment variable named by api_key_env. Free models: 20 requests a minute and 1000 a day per account.
+# [[backends]]
+# name = "openrouter-free"
+# url = "https://openrouter.ai/api/v1"
+# kind = "openai"
+# model = "qwen/qwen3.8-27b:free"
+# # api_key = "sk-or-..."   # or api_key_env = "OPENROUTER_API_KEY"
+# priority = 1
+# parallel = 2              # a run makes roughly 7-11 requests
+# context_window = 262144
+# max_tokens = 4096
+# thinking = "off"
+# prompt_tps = 2000.0
+# gen_tps = 60.0
+# first_byte_timeout = 60
+# stall_timeout = 60
+# cooldown = 60
+# # OpenRouter falls back within a request, to at most 3 models
+# extra_body = { models = ["qwen/qwen3.8-27b:free", "nvidia/nemotron-3-super-120b-a12b:free", "google/gemma-4-31b-it:free"], reasoning = { enabled = false } }
+
+# Paid OpenRouter models, used only while the others fail or are busy, the cheaper one first. The key needs a credit limit above 0.
+# [[backends]]
+# name = "openrouter-luna"
+# url = "https://openrouter.ai/api/v1"
+# kind = "openai"
+# model = "openai/gpt-6-luna"
+# # api_key = "sk-or-..."   # or api_key_env = "OPENROUTER_API_KEY"
+# priority = 8
+# parallel = 2
+# context_window = 400000
+# max_tokens = 8192
+# thinking = "off"
+# prompt_tps = 3000.0
+# gen_tps = 100.0
+# first_byte_timeout = 60
+# stall_timeout = 60
+# cooldown = 60
+# extra_body = { reasoning = { enabled = false } }
+
+# A second paid model, more expensive per answer than gpt-6-luna.
+# [[backends]]
+# name = "openrouter-deepseek"
+# url = "https://openrouter.ai/api/v1"
+# kind = "openai"
+# model = "deepseek/deepseek-v4.1-flash"
+# # api_key = "sk-or-..."   # or api_key_env = "OPENROUTER_API_KEY"
+# priority = 9
+# parallel = 2
+# context_window = 400000
+# max_tokens = 8192
+# thinking = "off"
+# prompt_tps = 3000.0
+# gen_tps = 100.0
+# first_byte_timeout = 60
+# stall_timeout = 60
+# cooldown = 60
+# extra_body = { reasoning = { enabled = false } }
+
+# Support forum: answers new posts, then only when mentioned
+[[channels]]
+id = 100000000000000001
+mode = "support"
+initial_response = true
+
+# Request forum: records the threads, answers only when mentioned
+[[channels]]
+id = 100000000000000002
+mode = "record"
+
+# Chat channel: a mention starts a thread with Clangy
+[[channels]]
+id = 100000000000000003
+mode = "mention"
+game = "se1"
+prompt = "This is the SE1 plugin developer channel. Most questions are about plugin development."
+
+# Each source becomes a link in the conversation's work folder. Folders (path) are used in place,
+# git repositories (url) are mirrored by `clangy sync-knowledge`.
+[[knowledge.se1]]
+link = "knowledge/skills"
+path = "/home/clangy/skills/skills"
+
+[[knowledge.se1]]
+link = "knowledge/books"
+url = "https://git.cometworks.se/CometWorks/se-dev-books.git"
+
+[[knowledge.se1]]
+link = ".se-dev"
+path = "/home/clangy/.se-dev"
+
+[[knowledge.se2]]
+link = "knowledge/skills"
+path = "/home/clangy/skills2/skills"
+
+[[knowledge.se2]]
+link = "knowledge/books"
+path = "/home/clangy/se2-dev-books/skills"
+
+[[knowledge.se2]]
+link = ".se2-dev"
+path = "/home/clangy/.se2-dev"

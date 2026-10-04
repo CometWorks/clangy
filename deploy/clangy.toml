@@ -1,0 +1,147 @@
+# Config of the nas deployment, lives at /home/clangy/clangy.toml (mode 600, it holds the token).
+# deploy.sh never overwrites it.
+data_dir = "/home/clangy/data"
+discord_token = ""
+run_deadline = 900.0
+
+[sandbox]
+firejail = true
+pi_command = ["/home/clangy/.pi/agent/bin/pi"]
+# pi's launcher looks for its Node.js under $HOME, which is the work folder in the sandbox.
+# uv runs the skills' scripts.
+path = "/home/clangy/.pi/agent/bin:/home/clangy/.local/share/pi-node/current/bin:/home/clangy/.local/bin:/usr/bin:/bin"
+# Not all of ~/.pi/agent: auth.json and the user's own sessions stay hidden.
+# uv's Python installs back the skills' venvs (the SE1 skills pin Python 3.11).
+read_only = [
+    "/home/clangy/.pi/agent/bin",
+    "/home/clangy/.pi/agent/install",
+    "/home/clangy/.local/share/pi-node",
+    "/home/clangy/.local/bin",
+    "/home/clangy/.local/share/uv/python",
+]
+# The skills and their venvs are read-only: uv must use the venvs as they are, offline
+env = { UV_NO_SYNC = "1", UV_OFFLINE = "1", UV_PYTHON_DOWNLOADS = "never" }
+# squid on the host with a domain allowlist; commands in the sandbox get HTTP(S)_PROXY pointing to it
+proxy = "127.0.0.1:3128"
+# Builds the sandboxes' shared Python environment (numpy, matplotlib, pydantic) with Debian's Python
+uv = "/home/clangy/.local/bin/uv"
+python = "/usr/bin/python3"
+
+[[backends]]
+name = "polaris"
+url = "http://polaris:8080/v1"
+model = "qwen3.8-27b"
+kind = "llamacpp"
+priority = 5
+parallel = 1
+context_window = 184320
+max_tokens = 4096
+thinking = "off"
+compat = { thinkingFormat = "qwen-chat-template" }
+prompt_tps = 350.0
+gen_tps = 50.0
+
+# OpenRouter's free models as a second backend. The key goes into api_key (keep this file mode 600) or the
+# environment variable named by api_key_env. Free models: 20 requests a minute and 1000 a day per account.
+# [[backends]]
+# name = "openrouter-free"
+# url = "https://openrouter.ai/api/v1"
+# kind = "openai"
+# model = "qwen/qwen3.8-27b:free"
+# # api_key = "sk-or-..."   # or api_key_env = "OPENROUTER_API_KEY"
+# priority = 1
+# parallel = 2              # a run makes roughly 7-11 requests
+# context_window = 262144
+# max_tokens = 4096
+# thinking = "off"
+# prompt_tps = 2000.0
+# gen_tps = 60.0
+# first_byte_timeout = 60
+# stall_timeout = 60
+# cooldown = 60
+# # OpenRouter falls back within a request, to at most 3 models
+# extra_body = { models = ["qwen/qwen3.8-27b:free", "nvidia/nemotron-3-super-120b-a12b:free", "google/gemma-4-31b-it:free"], reasoning = { enabled = false } }
+
+# Paid OpenRouter models, used only while the others fail or are busy, the cheaper one first. The key needs a credit limit above 0.
+# [[backends]]
+# name = "openrouter-luna"
+# url = "https://openrouter.ai/api/v1"
+# kind = "openai"
+# model = "openai/gpt-6-luna"
+# # api_key = "sk-or-..."   # or api_key_env = "OPENROUTER_API_KEY"
+# priority = 8
+# parallel = 2
+# context_window = 400000
+# max_tokens = 8192
+# thinking = "off"
+# prompt_tps = 3000.0
+# gen_tps = 100.0
+# first_byte_timeout = 60
+# stall_timeout = 60
+# cooldown = 60
+# extra_body = { reasoning = { enabled = false } }
+
+# A second paid model, more expensive per answer than gpt-6-luna.
+# [[backends]]
+# name = "openrouter-deepseek"
+# url = "https://openrouter.ai/api/v1"
+# kind = "openai"
+# model = "deepseek/deepseek-v4.1-flash"
+# # api_key = "sk-or-..."   # or api_key_env = "OPENROUTER_API_KEY"
+# priority = 9
+# parallel = 2
+# context_window = 400000
+# max_tokens = 8192
+# thinking = "off"
+# prompt_tps = 3000.0
+# gen_tps = 100.0
+# first_byte_timeout = 60
+# stall_timeout = 60
+# cooldown = 60
+# extra_body = { reasoning = { enabled = false } }
+
+# Chat channel: a mention starts a thread with Clangy
+[[channels]]
+id = 1556065388943511683
+mode = "mention"
+
+# Request forum: recorded, answers mentions in the threads, no first answer
+[[channels]]
+id = 1556065635589423164
+mode = "record"
+
+# Support forum: answers new threads once they have been quiet for 2 minutes
+[[channels]]
+id = 1556065514848002179
+mode = "support"
+initial_response = true
+initial_delay = 120.0
+
+# Ecosystem and plugin repos for every conversation, kept up to date by ~/repos/clone-or-pull
+[[mounts]]
+link = "repos"
+path = "/home/clangy/repos"
+
+[[knowledge.se1]]
+link = "knowledge/skills"
+path = "/home/clangy/skills/skills"
+
+[[knowledge.se1]]
+link = "knowledge/books"
+path = "/home/clangy/se-dev-books/skills"
+
+[[knowledge.se1]]
+link = ".se-dev"
+path = "/home/clangy/.se-dev"
+
+[[knowledge.se2]]
+link = "knowledge/skills"
+path = "/home/clangy/skills2/skills"
+
+[[knowledge.se2]]
+link = "knowledge/books"
+path = "/home/clangy/se2-dev-books/skills"
+
+[[knowledge.se2]]
+link = ".se2-dev"
+path = "/home/clangy/.se2-dev"
