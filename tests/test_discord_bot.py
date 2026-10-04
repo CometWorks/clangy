@@ -6,7 +6,7 @@ import discord
 from clangy.discord_bot import incoming
 
 
-def make_message(channel, author_id: int = 5, mentions=()) -> MagicMock:
+def make_message(channel, author_id: int = 5, mentions=(), role_mentions=()) -> MagicMock:
     message = MagicMock(spec=discord.Message)
     message.id = 42
     message.channel = channel
@@ -16,6 +16,8 @@ def make_message(channel, author_id: int = 5, mentions=()) -> MagicMock:
     message.clean_content = "@Clangy help"
     message.created_at = datetime(2026, 10, 3, tzinfo=timezone.utc)
     message.mentions = list(mentions)
+    message.guild.self_role.id = 77
+    message.raw_role_mentions = list(role_mentions)
     attachment = MagicMock(id=7, filename="info.log", size=10, url="https://cdn/info.log")
     message.attachments = [attachment]
     message.type = discord.MessageType.default
@@ -31,6 +33,13 @@ def test_forum_starter_message():
     assert (msg.channel_id, msg.parent_id, msg.starts_thread, msg.thread_name) == (42, 10, True, "Crash")
     assert msg.mentions_bot and not msg.from_self
     assert msg.attachments[0].filename == "info.log"
+
+
+def test_a_ping_of_the_bots_role_mentions_the_bot():
+    bot = MagicMock(spec=discord.ClientUser, id=99)
+    channel = MagicMock(spec=discord.TextChannel, id=40)
+    assert incoming(make_message(channel, role_mentions=[77]), bot).mentions_bot
+    assert not incoming(make_message(channel, role_mentions=[78]), bot).mentions_bot
 
 
 def test_channel_message_from_self():

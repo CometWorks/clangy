@@ -85,6 +85,8 @@ def incoming(message: discord.Message, bot: discord.ClientUser) -> IncomingMessa
     # with an empty message of its own that points to it.
     replied = message.reference.resolved if message.type in REPLY_TYPES and message.reference else None
     in_thread = isinstance(channel, discord.Thread)
+    # Discord's autocomplete offers the bot's managed role under the bot's name, so a ping of it counts too
+    role = message.guild.self_role if message.guild else None
     return IncomingMessage(
         id=message.id,
         channel_id=channel.id,
@@ -93,7 +95,7 @@ def incoming(message: discord.Message, bot: discord.ClientUser) -> IncomingMessa
         author=message.author.display_name,
         text=message.clean_content,
         created=message.created_at,
-        mentions_bot=bot in message.mentions,
+        mentions_bot=bot in message.mentions or role is not None and role.id in message.raw_role_mentions,
         from_self=message.author.id == bot.id,
         # The starter message of a forum post has the same id as the thread
         starts_thread=in_thread and message.id == channel.id,
