@@ -1,6 +1,8 @@
 """Discord message texts: answer splitting, footer, progress and error indications."""
 
 LIMIT = 2000
+STATUS_MARKS = ("⏳", "❌", "⚠️")
+"""Progress and error messages start with one of these."""
 
 
 def _is_fence(line: str) -> bool:

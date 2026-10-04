@@ -37,8 +37,6 @@ ANSWER_TOKENS = 500
 FIRST_RUN_TOKENS = 3000
 """System prompt and tool definitions, processed only on the first run of a conversation."""
 CACHE_AGE = timedelta(days=2)
-STATUS_MARKS = ("⏳", "❌", "⚠️")
-"""Clangy's progress and error messages start with these."""
 
 
 class HistoryUnavailable(RuntimeError):
@@ -389,7 +387,7 @@ class Clangy:
             if not m.from_self:
                 kept.append(m)
                 in_answer = False
-            elif m.text.startswith(STATUS_MARKS):
+            elif m.text.startswith(text.STATUS_MARKS):
                 in_answer = False
             elif in_answer or m.text.endswith(footer):
                 kept.append(replace(m, text=m.text.removesuffix(footer).rstrip()))
