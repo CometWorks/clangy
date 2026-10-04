@@ -118,7 +118,7 @@ def pi_arguments(spec: RunSpec) -> list[str]:
 def build_command(spec: RunSpec, port: int) -> list[str]:
     """Command line running pi with a clean environment, inside firejail unless disabled."""
     env = {
-        "PATH": f"{SANDBOX_BIN}:{spec.sandbox.path}",
+        "PATH": f"{SANDBOX_BIN}:{spec.paths.work / '.venv' / 'bin'}:{spec.sandbox.path}",
         "HOME": str(spec.paths.work),
         "LANG": "C.UTF-8",
         "PI_CODING_AGENT_DIR": str(spec.paths.agent_dir),

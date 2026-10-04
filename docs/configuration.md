@@ -27,6 +27,8 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `read_only` | `[]` | Extra host paths the sandbox may read, typically the node installation that holds pi. |
 | `env` | `{}` | Extra environment variables inside the sandbox, e.g. `UV_OFFLINE = "1"` for skills run with `uv run`. |
 | `proxy` | none | `host:port` of an HTTP proxy with a domain allowlist the sandbox may use, e.g. a local squid. Unset means no network at all. |
+| `uv` | `uv` | uv on the host. It installs each work folder's Python environment (see design.md, Sandbox). The systemd unit's `PATH` lacks `~/.local/bin`, so the nas gives the full path. |
+| `python` | `python3` | Interpreter of the work folders' Python environments, as uv's `--python`. It must be readable in the sandbox. |
 
 ## `[[backends]]`
 

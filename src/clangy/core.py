@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import shutil
 import time
 from collections.abc import Awaitable, Callable
@@ -29,6 +30,8 @@ log = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = PACKAGE_DIR / "prompts" / "system.md"
 GUIDE_DIR = PACKAGE_DIR / "guide"
+WORKSPACE_DIR = PACKAGE_DIR / "workspace"
+"""pyproject.toml and uv.lock of the Python environment in every work folder."""
 ANSWER_TOKENS = 500
 FIRST_RUN_TOKENS = 3000
 """System prompt and tool definitions, processed only on the first run of a conversation."""
@@ -630,6 +633,7 @@ class Clangy:
         tools: list[str] = []
         for _ in range(2):
             paths, read_only = self._prepare_work_dir(conv)
+            await self._prepare_python(paths.work)
             port = free_port()
             write_pi_config(paths, backend.config, port)
             slot = await backend.take_slot(self.http, conv.key, time.monotonic())
@@ -751,6 +755,30 @@ class Clangy:
             system += f"\n# Channel\n{channel.prompt.strip()}\n"
         paths.system_prompt.write_text(system)
         return paths, [target for target in links.values() if target is not None]
+
+    async def _prepare_python(self, work: Path) -> None:
+        """Installs the work folder's Python environment once, on the host, since the sandbox has no network.
+
+        Files are copied from uv's cache, not hardlinked: a sandbox writing into a hardlinked file would change
+        it for every conversation.
+        """
+        if (work / ".venv" / "bin" / "python").exists():
+            return
+        for name in ("pyproject.toml", "uv.lock"):
+            shutil.copyfile(WORKSPACE_DIR / name, work / name)
+        sandbox = self.config.sandbox
+        env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"} | {"UV_LINK_MODE": "copy"}
+        try:
+            process = await asyncio.create_subprocess_exec(
+                sandbox.uv, "sync", "--frozen", "--quiet", "--python", sandbox.python,
+                cwd=work, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            )  # fmt: skip
+            output, _ = await process.communicate()
+        except OSError as e:
+            log.warning("No Python environment for %s: %r", work, e)
+            return
+        if process.returncode != 0:
+            log.warning("No Python environment for %s: %s", work, output.decode(errors="replace")[-1000:])
 
     def _snapshot_session(self, conv: Conversation) -> None:
         session = RunPaths(self._work_dir(conv)).session

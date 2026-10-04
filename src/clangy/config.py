@@ -67,6 +67,10 @@ class SandboxConfig(BaseModel):
     """Extra environment variables inside the sandbox, e.g. to keep uv offline."""
     proxy: str | None = None
     """host:port of an HTTP proxy the sandbox may use, e.g. a local squid with a domain allowlist."""
+    uv: str = "uv"
+    """uv on the host, installs each work folder's Python environment."""
+    python: str = "python3"
+    """Interpreter of the work folders' Python environments, must be readable in the sandbox."""
 
 
 class KnowledgeSource(BaseModel):

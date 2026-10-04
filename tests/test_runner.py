@@ -23,6 +23,9 @@ def test_firejail_command(tmp_path):
         assert f"--read-only={path}" in jail
     assert inner[:2] == ["env", "-i"]
     assert f"HOME={tmp_path}" in inner and "CLANGY_PORT=4321" in inner and "UV_OFFLINE=1" in inner
+    assert (
+        next(a for a in inner if a.startswith("PATH=")).split(":")[1] == f"{tmp_path}/.venv/bin"
+    ), "the work folder's Python"
     # Secrets from the host environment never reach the sandbox
     assert not any(arg.startswith(("DISCORD", "CLANGY_TEST_KEY")) for arg in inner)
     assert inner[-1] == "[host] hi"

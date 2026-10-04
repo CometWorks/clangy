@@ -12,13 +12,13 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 | `~/skills`, `~/skills2`, `~/se-dev-books`, `~/se2-dev-books`, `~/.se-dev`, `~/.se2-dev` | The prepared knowledge, used in place. |
 | `~/repos/` | Ecosystem and plugin repositories, mounted read-only into every conversation as `repos`; `~/repos/clone-or-pull` updates them daily. |
 | `~/.pi/agent/bin/pi` | pi, installed by its own installer, with Node.js under `~/.local/share/pi-node`. |
-| `~/.local/bin/uv` | uv, only needed by deploys. |
+| `~/.local/bin/uv` | uv: deploys, and the work folders' Python environments (`sandbox.uv`). Its cache in `~/.cache/uv` holds the packages they are copied from. |
 
 The sandbox may read pi's `bin` and `install` folders and its Node.js, but not the rest of `~/.pi/agent` (`auth.json`, pi's own sessions). Lingering is enabled for `clangy`, so its user services run without a login.
 
 ## Requirements
 
-- firejail (`sudo apt install firejail`). Without a working sandbox `clangy run` refuses to start, with exit status 78, which the unit doesn't restart on.
+- firejail, pandoc and zip (`sudo apt install firejail pandoc zip`). The sandbox uses pandoc, zip and the other archive tools from `/usr/bin`. Without a working sandbox `clangy run` refuses to start, with exit status 78, which the unit doesn't restart on.
 - The backends reachable from the host (`polaris:8080`, and `openrouter.ai` if the OpenRouter backend is enabled).
 - Optionally squid, see Proxy.
 

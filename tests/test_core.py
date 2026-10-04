@@ -906,3 +906,20 @@ async def test_priority_decides_before_speed(config, chat, backend, backend2):
     local.run_seconds = cloud.run_seconds = 60.0
     assert await bot._choose_backend(new, 3000) == (cloud, "new"), "all busy: the soonest, ties by priority"
     await bot.close()
+
+
+async def test_work_folder_gets_its_python_environment_once(bot):
+    await bot.on_message(forum_post(SUPPORT, 1140, "Plot this"))
+    await bot.wait_idle()
+    await bot.on_message(message(1140, "@Clangy again", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
+    work = bot.agent.specs[0].paths.work
+    assert (work / ".uv-calls").read_text() == "sync --frozen --quiet --python python3\n", "once, from the lock"
+    assert (work / "pyproject.toml").read_text().count("numpy") == 1 and (work / "uv.lock").exists()
+
+
+async def test_answers_still_come_without_python_environment(bot, chat, config):
+    config.sandbox.uv = "/nonexistent/uv"
+    await bot.on_message(forum_post(SUPPORT, 1141, "Hi"))
+    await bot.wait_idle()
+    assert chat.in_channel(1141)[0].current.startswith("Default answer.")

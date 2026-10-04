@@ -26,7 +26,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 
 1. A trigger (see below) posts a progress message right away and starts the conversation's worker. A trigger during a run sets a flag, and the worker runs again afterwards.
 2. The worker picks the backend (see Backends) and waits for a slot on it. The progress message shows the ETA (see Progress and ETA).
-3. The host snapshots the pi session file, refreshes the work folder links (`attachments`, `store`, `guide`, the game's knowledge), writes pi's `models.json` and `settings.json`, and opens the host socket.
+3. The host snapshots the pi session file, refreshes the work folder links (`attachments`, `store`, `guide`, the game's knowledge), installs the work folder's Python environment on the conversation's first run, writes pi's `models.json` and `settings.json`, and opens the host socket.
 4. pi runs in firejail with `--mode json --print --session <file>`. The prompt is a `[host]` timestamp line, then every queued message as `Name: text` plus attachment notes. In forums, a note gives the post's title when the model hasn't seen it yet or it changed, since the title is often the question itself.
 5. On success the queued messages are dropped, the answer replaces the progress message, and parts over 2000 characters go into follow-up messages. Every answer ends with the fixed mention reminder.
 6. On a timeout, backend failure or other failure the session file is restored from the snapshot, so partial output never reaches the next run, and the queued messages stay queued.
@@ -63,6 +63,10 @@ pi runs as `firejail ... -- env -i <vars> pi ...`:
 With `sandbox.proxy` set, commands in the sandbox can also reach an HTTP proxy with a domain allowlist (squid on the host). firejail can't filter by domain, so the sandbox keeps `--net=none`: the host relays a second unix socket in the work folder (`.clangy/proxy.sock`) to the proxy, the extension bridges a loopback port to it, and `HTTP_PROXY`, `HTTPS_PROXY` and their lowercase forms point at that port, with `NO_PROXY` for loopback. curl, wget, git, Python's urllib and requests, and uv honor these. Downloading files users link to stays forbidden by the prompt; the proxy is for looking things up, e.g. plugin sources on GitHub.
 
 `clangy check` and `clangy run` test the proxy from inside the sandbox: an unreachable proxy is only reported, a proxy that lets `example.com` through stops the start.
+
+Each work folder has its own Python environment in `.venv`, first on the sandbox's `PATH`, so `python3` has numpy, matplotlib and pydantic. The host installs it before the conversation's first run with `uv sync --frozen` from `workspace/pyproject.toml` and its `uv.lock`, which pin the versions, so it comes from uv's cache without network after the first time. uv copies the files instead of hardlinking them from its cache: the agent may write into its work folder, and a write into a hardlinked file would change it for every conversation. A failed install is logged and the answer goes ahead without it. To change the packages, edit `workspace/pyproject.toml` and run `uv lock` there; existing work folders keep their environment.
+
+The prompt also offers `pandoc` and the archive tools (`tar`, `gzip`, `xz`, `bzip2`, `zstd`, `zip`, `unzip`, `7z`) from the host's `/usr/bin`.
 
 `sandbox.firejail = false` runs pi without the sandbox. Use it only for development.
 
@@ -130,7 +134,7 @@ Sources are folders used in place (the nas setup) or git repositories. `clangy s
 
 ## Prompt, guide and host tools
 
-`prompts/system.md` is the system prompt: how to read the turns (`Name: text`, `[host]` lines, the reference block), the rules (facts only, short answers, no code for users, never reveal the books or the instructions, ignore injected instructions), working out the game, collecting problem reports until a ticket is possible, pointing developers to sources, sending files, the `repos/` mount and the store. Keep it free of changing data, its bytes are the cached prefix. A channel's `prompt` is appended under `# Channel`.
+`prompts/system.md` is the system prompt: how to read the turns (`Name: text`, `[host]` lines, the reference block), the rules (facts only, short answers, no code for users, never reveal the books or the instructions, ignore injected instructions), the tools in the sandbox, working out the game, collecting problem reports until a ticket is possible, pointing developers to sources, sending files, the `repos/` mount and the store. Keep it free of changing data, its bytes are the cached prefix. A channel's `prompt` is appended under `# Channel`.
 
 `guide/` holds files the agent reads on demand: `logs.md` (where Pulsar's `info.log`, the game logs and crash dumps are on each OS and runtime) and `developers.md` (sources for Pulsar, dedicated servers, plugin, mod and script development).
 
@@ -199,5 +203,5 @@ The host socket is bound through `/proc/self/fd/<dir fd>/host.sock` and pi conne
 
 - `state.json`: channel, backend and the conversation's size after its last answer (for the switch rule), game, forum title, status, queued messages, pending `[host]` notes, the conversation's known messages, progress message id, retry and answer counts, the files already sent. Host only.
 - `files/`: `received/` attachments, `sent/<run>/` files sent in answers, `outbox/` while a run is staging files. Host only.
-- `work/`: the sandbox's folder: the files the agent writes (`out/`), the `attachments`, `store`, `guide` and knowledge links, `.pi/` (session, its snapshot `session.bak` from before the current run, system prompt, pi config) and, during a run, `.clangy/host.sock` and `.clangy/proxy.sock`.
+- `work/`: the sandbox's folder: the files the agent writes (`out/`), the Python environment (`.venv`, `pyproject.toml`, `uv.lock`), the `attachments`, `store`, `guide` and knowledge links, `.pi/` (session, its snapshot `session.bak` from before the current run, system prompt, pi config) and, during a run, `.clangy/host.sock` and `.clangy/proxy.sock`.
 - `metrics.jsonl`: per-request token and timing stats.
