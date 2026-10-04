@@ -62,6 +62,8 @@ class PendingMessage(BaseModel):
     text: str
     created: datetime
     attachments: list[str] = Field(default_factory=list)
+    reference: bool = False
+    """Earlier chat that came along with a mention as context, not something to answer."""
 
 
 class KnownMessage(BaseModel):
@@ -272,7 +274,7 @@ class Clangy:
             conv = self._new_conversation(thread_id, channel, msg.guild_id)
         for message in earlier:
             if not message.from_self:
-                await self._add_message(conv, channel, message)
+                await self._add_message(conv, channel, message, reference=True)
         return conv
 
     def _watched(self, msg: IncomingMessage) -> bool:
@@ -312,14 +314,18 @@ class Clangy:
             except HistoryUnavailable as e:
                 log.warning("Couldn't catch up on channel %s: %s", channel.id, e)
 
-    async def _add_message(self, conv: Conversation, channel: ChannelConfig, msg: IncomingMessage) -> None:
+    async def _add_message(
+        self, conv: Conversation, channel: ChannelConfig, msg: IncomingMessage, reference: bool = False
+    ) -> None:
         """Queues a message for the next run and remembers it for edits and deletions."""
-        if channel.mode == "record":
+        if channel.mode == "record" and not reference:
             files = "".join(f"\n- attachment: {a.filename}" for a in msg.attachments)
             self._record(conv, msg.author, msg.created, msg.text + files, msg.thread_name)
         conv.known[msg.id] = KnownMessage(author=msg.author, text=msg.text, created=msg.created)
         self._message_threads[msg.id] = conv.thread_id
-        conv.pending.append(await self._pending(conv, msg))
+        pending = await self._pending(conv, msg)
+        pending.reference = reference
+        conv.pending.append(pending)
 
     def _schedule_first_answer(self, conv: Conversation, delay: float) -> None:
         """(Re)starts the wait before the first answer to a new forum thread; any activity restarts it."""
@@ -589,10 +595,24 @@ class Clangy:
         now = datetime.now(timezone.utc)
         lines = [f"[host] {now:%Y-%m-%d %H:%M} UTC"]
         lines += conv.host_notes
-        for m in conv.pending:
+        reference = [m for m in conv.pending if m.reference]
+        if reference:
+            lines.append(
+                "[host] Earlier messages, for reference only. Don't answer them; "
+                "use them only where the messages after them refer to them:"
+            )
+            lines += self._message_lines(reference)
+            lines.append("[host] End of the earlier messages.")
+        lines += self._message_lines([m for m in conv.pending if not m.reference])
+        return "\n".join(lines)
+
+    @staticmethod
+    def _message_lines(messages: list[PendingMessage]) -> list[str]:
+        lines = []
+        for m in messages:
             lines.append(f"{m.author}: {m.text}")
             lines += [f"[host] Attachment from {m.author}: {a}" for a in m.attachments]
-        return "\n".join(lines)
+        return lines
 
     def _knowledge_note(self, game: Game) -> str:
         """Tells the model the game and its skills, like pi's own skill list, without touching the system prompt."""

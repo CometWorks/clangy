@@ -637,10 +637,13 @@ async def test_mention_brings_the_recent_channel_chat_along(bot, chat):
     prompt = bot.agent.prompts[0]
     lines = [line for line in prompt.splitlines() if not line.startswith("[host] 20")]
     assert lines == [
+        "[host] Earlier messages, for reference only. Don't answer them; "
+        "use them only where the messages after them refer to them:",
         "Alice: Little",
         "Bob: brown",
         "[host] Attachment from Bob: attachments/603-fox.png (1 KB)",
         "Alice: fox",
+        "[host] End of the earlier messages.",
         "Alice: @Clangy Do we have this animal in SE1?",
     ]
     bot.on_edit(message(MENTION, "Big", id=601))
@@ -702,6 +705,7 @@ async def test_context_comes_from_the_cache_after_catching_up(bot, chat):
     assert len(chat.history_calls) == 1, "no Discord request at mention time"
     lines = [line for line in bot.agent.prompts[0].splitlines() if not line.startswith("[host]")]
     assert lines == ["Alice: before the restart", "Alice: Little!", "Alice: brown", "Alice: @Clangy what is it?"]
+    assert bot.agent.prompts[0].index("[host] End of the earlier messages.") < bot.agent.prompts[0].index("what is it?")
 
 
 async def test_dead_attachment_links_become_a_note(bot, chat):
@@ -750,3 +754,14 @@ async def test_knowledge_note_lists_the_skills(bot, config, tmp_path):
     assert "- se-dev-game-book: Handbook (knowledge/books/se-dev-game-book/SKILL.md)" in second
     assert second.endswith("Now write your answer to the user's messages; don't refer to earlier drafts.")
     assert bot.conversations[1080].host_notes == []
+
+
+async def test_reference_only_for_the_first_run(bot, chat):
+    chat.channel_history[MENTION] = [message(MENTION, "Do we have foxes?", id=611)]
+    await bot.on_message(message(MENTION, "@Clangy Help, my game crashed!", id=612, mentions_bot=True))
+    await bot.wait_idle()
+    first = bot.agent.prompts[0]
+    assert first.index("Do we have foxes?") < first.index("End of the earlier messages") < first.index("crashed!")
+    await bot.on_message(message(612, "@Clangy it crashes on load", parent_id=MENTION, mentions_bot=True))
+    await bot.wait_idle()
+    assert "for reference" not in bot.agent.prompts[1], "messages in Clangy's thread are the conversation"
