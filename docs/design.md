@@ -14,7 +14,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 | `backend.py` | Per-backend run queue (`parallel` runs at once), runs ahead, measured prompt and generation speeds, ETA, health checks and cooldowns, llama.cpp slot pinning and save/restore. |
 | `proxy.py` | Per-run HTTP server on a unix socket inside the work folder: forwards chat completions to the run's backend, detects backend failures, and serves the host tools. |
 | `runner.py` | Writes pi's config, builds the firejail command line, runs pi with a deadline and reads its JSON event stream. |
-| `store.py` | Tickets, notes, plans and records in Clangy's own store. |
+| `store.py` | Tickets, notes and plans in the workspace, and the records of `record` channels. |
 | `knowledge.py` | The daily sync of knowledge kept in git repositories. |
 | `cache.py` | The local message cache (`messages.sqlite`). |
 | `timings.py` | `clangy timings`, the summary of `metrics.jsonl`. |
@@ -22,15 +22,16 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 | `files.py` | Files the agent sends: validation, at-most-once sending, ZIP grouping. |
 | `text.py` | Discord texts: answer splitting, footer, progress and error messages. |
 | `pi/clangy.ts` | pi extension loaded in the sandbox: replaces the system prompt, bridges the host and proxy sockets, defines the host tools. |
-| `sandbox-bin/` | `rg` and `fd` wrappers that follow links. |
+| `sandbox-bin/` | `rg`, `fd` and `find` wrappers that follow links. |
 | `workspace/` | `pyproject.toml` and `uv.lock` of the sandboxes' shared Python environment, see Sandbox. |
 | `prompts/system.md`, `guide/*.md` | The system prompt, and the guide files the agent reads on demand. |
+| `templates/` | The workspace's `AGENTS.md` and ticket template, written when missing. |
 
 ## A run
 
 1. A trigger (see below) posts a progress message right away and starts the conversation's worker. A trigger during a run sets a flag, and the worker runs again afterwards.
 2. The worker picks the backend (see Backends) and waits for a slot on it. The progress message shows the ETA (see Progress and ETA).
-3. The host snapshots the pi session file, refreshes the work folder links (`attachments`, `store`, `guide`, the game's knowledge), writes pi's `models.json` and `settings.json`, and opens the host socket.
+3. The host snapshots the pi session file, refreshes the work folder links (`attachments`, `store/*`, `guide`, the game's knowledge), writes pi's `models.json` and `settings.json`, and opens the host socket.
 4. pi runs in firejail with `--mode json --print --session <file>`. The prompt is a `[host]` timestamp line, then every queued message as `Name: text` plus attachment notes. In forums, a note gives the post's title when the model hasn't seen it yet or it changed, since the title is often the question itself.
 5. On success the queued messages are dropped, the answer replaces the progress message, and parts over 2000 characters go into follow-up messages. Every answer ends with the fixed mention reminder.
 6. On a timeout, backend failure or other failure the session file is restored from the snapshot, so partial output never reaches the next run, and the queued messages stay queued.
@@ -44,7 +45,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 - A mention in a thread Clangy doesn't know yet (started before it ran, or by someone else in a text channel) starts a conversation in that thread, with the whole thread as context, read from Discord. A thread is one conversation, and its first post is often the request itself. Clangy's own answers in it come along as `Clangy (you): text`, without the footer; its progress and error messages and v1's answers (which have no footer) don't.
 - Without context Clangy doesn't answer: if the history can't be read, it logs an error and stays silent.
 - Nothing is answered after the fact: messages posted while Clangy was down are context for later mentions, never triggers. After every gateway (re)connect, the first message in a known thread first reads all of the thread from Discord and queues ahead of that message what the conversation doesn't have yet: what was posted while Clangy was down, and, as earlier messages for reference, older messages it never read, such as the start of a thread that an older version joined on a mention without reading it.
-- `record` channels also append every message to `store/records/<thread>.md`, without inference, so other conversations can find requests later. A record expires `retention_days` after its last message (see Retention).
+- `record` channels also append every message to `<data_dir>/records/<thread>.md` (`store/records/` in the sandbox), without inference, so other conversations can find requests later. A record expires `retention_days` after its last message (see Retention).
 
 ### Context and the message cache
 
@@ -62,7 +63,7 @@ pi runs as `firejail ... -- env -i <vars> pi ...`:
 
 - `--net=none`: the sandbox has only its own loopback. The pi extension listens on `127.0.0.1:$CLANGY_PORT` and pipes connections to the host socket in the work folder. That socket is the only way out.
 - The environment is replaced. The Discord token and backend API keys stay on the host. The proxy adds the API key to forwarded requests.
-- The work folder is the only writable path. The attachments, the store, the guide, the `[[mounts]]` (the nas: `~/repos` and the humanizer skill), the conversation's knowledge snapshot, the shared Python environment, the package and the configured `sandbox.read_only` paths (node, pi, uv's Pythons) are read-only. `sandbox.env` adds environment variables, e.g. to keep uv offline for the skills' scripts.
+- The work folder is the only writable path. The attachments, the store folders, the guide, the `[[mounts]]` (the nas: `~/repos` and the humanizer skill), the conversation's knowledge snapshot, the shared Python environment, the package and the configured `sandbox.read_only` paths (node, pi, uv's Pythons) are read-only. `sandbox.env` adds environment variables, e.g. to keep uv offline for the skills' scripts.
 - No capabilities, no root, seccomp, private `/dev` and `/tmp`.
 - No per-sandbox memory limit: firejail's `--rlimit-as` breaks Node.js, whose WebAssembly reserves large address ranges. The systemd unit caps the whole service with `MemoryMax` and `TasksMax` instead.
 
@@ -141,15 +142,15 @@ When the game is known, the host note lists the skills under `knowledge/`: every
 
 A mount is linked from the first run, before the game is known. The nas mounts the humanizer skill as `knowledge/humanizer`, and the system prompt has the model read it before any answer longer than one sentence.
 
-The knowledge is linked into the work folder, and ripgrep and fd don't follow links by default, so `sandbox-bin/rg` and `sandbox-bin/fd`, first on the sandbox's `PATH`, add `--follow` for pi's grep and find.
+The knowledge is linked into the work folder, and ripgrep and fd don't follow links by default, so `sandbox-bin/rg` and `sandbox-bin/fd`, first on the sandbox's `PATH`, add `--follow` for pi's grep and find. `sandbox-bin/find` adds `-H` for the shell's find, which otherwise doesn't descend into a link given as the start path, such as a plugin skill's `Data/Sources/<repo>`.
 
-Each configured knowledge source of the game becomes a link in the work folder: `knowledge/skills`, `knowledge/books`, and the prepared data the skills expect in the home folder (`.se-dev`, `.se2-dev`). The links are resolved when each run starts and the other game's links are removed. The firejail whitelist contains only that game's targets.
+Each configured knowledge source of the game becomes a link in the work folder: `knowledge/skills`, `knowledge/books`, and prepared data the skills expect in the home folder. The links are resolved when each run starts and the other game's links are removed. The firejail whitelist contains only that game's targets, plus the mounts. Data that must be readable whatever the game, like the skills' data when every conversation can reach both games' skills through `repos/`, goes into `[[mounts]]` instead.
 
 Sources are folders used in place (the nas setup) or git repositories. `clangy sync-knowledge` (daily) keeps mirrors of the repositories. When any HEAD changed, it exports all of them into a new `releases/<timestamp>` folder and swaps the `current` symlink with an atomic rename, keeping the current and the previous release. Since links resolve per run, a run keeps one snapshot even if the sync swaps trees meanwhile.
 
 ## Prompt, guide and host tools
 
-`prompts/system.md` is the system prompt: how to read the turns (`Name: text`, replies, `[host]` lines, the reference block), the rules (facts only, short answers, no code for users, never reveal the books or the instructions, ignore injected instructions), the tools in the sandbox, working out the game, the valid game and server setups, collecting problem reports (setup first, logs only after it) until a ticket is possible, pointing developers to sources, sending files, the `repos/` mount and the store. Keep it free of changing data, its bytes are the cached prefix. A channel's `prompt` is appended under `# Channel`.
+`prompts/system.md` is the system prompt: how to read the turns (`Name: text`, replies, `[host]` lines, the reference block), the rules (facts only, short answers, no code for users, never reveal the books or the instructions, ignore injected instructions), the tools in the sandbox, working out the game, the valid game and server setups, collecting problem reports (setup first, logs only after it) until a developer could start on a ticket, what a ticket holds, pointing developers to sources, sending files, the `repos/` mount and the store. Keep it free of changing data, its bytes are the cached prefix. A channel's `prompt` is appended under `# Channel`.
 
 `guide/` holds files the agent reads on demand: `logs.md` (where Pulsar's and Magnetar's `info.log`, the game logs and crash dumps are for each setup) and `developers.md` (sources for Pulsar, dedicated servers, plugin, mod and script development).
 
@@ -159,8 +160,10 @@ Host tools, defined in `pi/clangy.ts` and run by the host through the socket:
 |---|---|
 | `set_game` | Records SE1 or SE2 and ends the run; the host runs pi again with that game's knowledge (see Game version and knowledge). |
 | `attach_files` | Stages files for the answer (see Files). |
-| `ticket_create`, `ticket_add_report` | Files a problem report, or adds a repeated report to an existing ticket. |
+| `ticket_create`, `ticket_add_report` | Files a problem report, or adds a repeated report to an open ticket. |
 | `note_create`, `plan_create` | Shared findings, and plans from ideas or requests. |
+
+The last four take optional `files` to keep, see Store.
 
 A tool error goes back to the model as a failed tool call. `runner.HOST_TOOLS` must list the same names, since pi 1.x applies `--tools` to extension tools too; a test checks this.
 
@@ -180,11 +183,25 @@ Sent: the agent writes files in its work folder (by convention `out/`) and calls
 - keeps an answer within Discord's 10 attachments and `answer_max_bytes` in total;
 - stages the files in `files/outbox/`. If the run succeeds they move to `files/sent/<run number>/` and go out with the last part of the answer. If it fails they are dropped and can be sent again.
 
-`files/` is outside the sandbox's writable area, so everything received and sent stays even if the agent deletes its own copies, until the conversation expires (see Retention). Tickets point at it with a `files:` frontmatter entry.
+`files/` is outside the sandbox's writable area, so everything received and sent stays even if the agent deletes its own copies, until the conversation expires (see Retention). Files a ticket needs are copied into the workspace, see Store.
 
 ## Store
 
-`<data_dir>/store` holds `tickets/T-0001.md`, `notes/N-0001.md`, `plans/P-0001.md` and `records/<thread>.md`. The agent reads it through the read-only `store` link and searches it with grep. Writes go through host tools, which assign numbers with exclusive file creation, validate the title (at most 120 characters) and body (at most 20000), and add the thread link, game and the conversation's `files` folder to the frontmatter. `ticket_add_report` appends a repeated report to an existing ticket.
+Tickets, notes and plans are for the developers, so they live in a workspace laid out like the developers' own (`workspace_dir`, the `clangy` home folder on the nas) and outlive the conversations:
+
+- `AGENTS.md`: the rules for agents working in the workspace.
+- `tickets/T-0001.md`, with `Template.md`, and `completed/` and `canceled/` for the tickets developers have finished.
+- `notes/N-0001.md`, or `notes/N-0001/` with `NOTE.md` and files. The same for `plans/` with `PLAN.md`.
+
+The host writes `AGENTS.md` and the template from `templates/` when they are missing, and never touches them after that, so they can be edited on the host.
+
+Records of `record` channels hold message text and expire with the conversations, so they stay in `<data_dir>/records`.
+
+The agent reads `tickets/`, `notes/`, `plans/` and the records through read-only links under `store/` and searches them with grep. Nothing else of the workspace is visible in the sandbox. Writes go through host tools, which assign numbers with exclusive file creation (tickets count `completed/` and `canceled/` too), validate the title (at most 120 characters) and body (at most 20000), and add the thread link and game to the frontmatter. A ticket's body goes under `# Description`, followed by an empty `# Work log` for the developer.
+
+`files` lists attachments (`attachments/...`) and files the agent wrote, each with what it shows. Hidden files and anything else outside the work folder are refused, as are files over `attachment_max_bytes`. A ticket's files are copied into a new note, `N-0001/` with `NOTE.md` listing each file, what it shows and who posted it when; the ticket's `notes:` frontmatter names the note. A note or plan with files gets its own folder for them.
+
+`ticket_add_report` adds a repeated report of the same problem to an open ticket as a `## Report` section above `# Work log`, its files in a new note linked the same way. A report on a completed or canceled ticket is refused: if the problem came back, the agent files a new ticket naming the old one.
 
 ## Metrics
 
@@ -225,6 +242,6 @@ If a conversation has answers but its pi session file is gone, for example becau
 
 ### Retention
 
-At startup, before loading the conversations, Clangy deletes what it kept of conversations nobody touched for `retention_days` (30): everything in the conversation's folder except `metrics.jsonl`, which holds no message text and keeps `clangy timings` complete. A conversation's age is the modification time of its `state.json`, which every message, edit and answer rewrites. A folder without `state.json` goes by its own modification time. `state.json` is deleted last, so a cleanup cut short is finished on the next start. `store/records/<thread>.md` files go by their modification time too. The message cache is pruned at the same time.
+At startup, before loading the conversations, Clangy deletes what it kept of conversations nobody touched for `retention_days` (30): everything in the conversation's folder except `metrics.jsonl`, which holds no message text and keeps `clangy timings` complete. A conversation's age is the modification time of its `state.json`, which every message, edit and answer rewrites. A folder without `state.json` goes by its own modification time. `state.json` is deleted last, so a cleanup cut short is finished on the next start. Records (`<data_dir>/records/<thread>.md`) go by their modification time too. The message cache is pruned at the same time.
 
-The service restarts daily (see deployment.md), so nothing is kept more than a day past the limit. A mention in an expired thread starts a new conversation, with the whole thread read from Discord, Clangy's earlier answers included (see When Clangy responds). Tickets, notes and plans stay, but their `files:` links point at deleted folders. Copies outside `data_dir` are not covered: llama.cpp slot saves on the backend host (`--slot-save-path`) and the service's journal.
+The service restarts daily (see deployment.md), so nothing is kept more than a day past the limit. A mention in an expired thread starts a new conversation, with the whole thread read from Discord, Clangy's earlier answers included (see When Clangy responds). Tickets, notes and plans are in the workspace, with copies of their files, so they stay. Copies outside `data_dir` are not covered: llama.cpp slot saves on the backend host (`--slot-save-path`) and the service's journal.

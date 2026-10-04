@@ -126,14 +126,14 @@ def test_search_wrappers_follow_links(tmp_path):
 
     tools = tmp_path / "bin"
     tools.mkdir()
-    for name in ("rg", "fd"):
+    for name in ("rg", "fd", "find"):
         fake = tools / name
         fake.write_text(f'#!/bin/sh\necho {name} "$@"\n')
         fake.chmod(0o755)
     env = {"PATH": f"{SANDBOX_BIN}:{tools}:/usr/bin:/bin"}
-    for name in ("rg", "fd"):
+    for name, follow in (("rg", "--follow"), ("fd", "--follow"), ("find", "-H")):
         out = subprocess.run([name, "needle", "knowledge"], env=env, capture_output=True, text=True, check=True)
-        assert out.stdout.strip() == f"{name} --follow needle knowledge"
+        assert out.stdout.strip() == f"{name} {follow} needle knowledge"
 
 
 def test_thinking_off_is_sent_with_a_thinking_format(tmp_path):

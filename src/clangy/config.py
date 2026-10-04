@@ -101,6 +101,8 @@ class KnowledgeSource(BaseModel):
 
 class Config(BaseModel):
     data_dir: Path
+    workspace_dir: Path | None = None
+    """Tickets, notes and plans, kept past retention_days. Defaults to `<data_dir>/workspace`."""
     discord_token: str = ""
     """Bot token; falls back to the DISCORD_TOKEN environment variable. Keep the file readable only by the bot."""
     backends: list[BackendConfig]

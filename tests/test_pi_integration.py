@@ -41,7 +41,7 @@ async def test_pi_run_with_host_tool_and_stable_prefix(tmp_path, backend, chat):
     first_reply = chat.in_channel(2000)[0]
     assert first_reply.current == f"Filed T-0001.\n\n{text.footer('Clangy')}"
     assert first_reply.files == [b"hi\n"]
-    assert (tmp_path / "store" / "tickets" / "T-0001.md").exists()
+    assert (tmp_path / "workspace" / "tickets" / "T-0001.md").exists()
     run = json.loads((bot.conversation_dir(2000) / "metrics.jsonl").read_text().splitlines()[0])
     assert run["tools"] == ["bash", "attach_files", "ticket_create"] and run["steps"] == 4
     assert len(run["requests"]) == 4 and run["prompt_tokens"] == 400

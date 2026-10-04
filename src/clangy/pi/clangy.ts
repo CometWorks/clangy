@@ -42,7 +42,16 @@ function callHost(name: string, params: unknown): Promise<HostReply> {
 }
 
 const title = Type.String({ description: "Short, specific title" });
-const body = Type.String({ description: "Markdown body" });
+const body = Type.String({ description: "Markdown body, with ## headings" });
+const files = Type.Optional(
+	Type.Array(
+		Type.Object({
+			path: Type.String({ description: "An attachments/ path or a file you wrote" }),
+			about: Type.String({ description: "What it shows" }),
+		}),
+		{ description: "Files a developer needs, kept with it" },
+	),
+);
 
 const tools = [
 	{
@@ -63,22 +72,22 @@ const tools = [
 	{
 		name: "ticket_create",
 		description: "Create a ticket from a problem report. Search store/tickets for duplicates first.",
-		parameters: Type.Object({ title, body }),
+		parameters: Type.Object({ title, body, files }),
 	},
 	{
 		name: "ticket_add_report",
 		description: "Add a repeated report of the same problem to an existing ticket.",
-		parameters: Type.Object({ id: Type.String({ description: "Ticket id, e.g. T-0012" }), body }),
+		parameters: Type.Object({ id: Type.String({ description: "Ticket id, e.g. T-0012" }), body, files }),
 	},
 	{
 		name: "note_create",
 		description: "Create a note with shared findings or analysis.",
-		parameters: Type.Object({ title, body }),
+		parameters: Type.Object({ title, body, files }),
 	},
 	{
 		name: "plan_create",
 		description: "Create a plan from an idea or request, e.g. a plugin, mod or script request.",
-		parameters: Type.Object({ title, body }),
+		parameters: Type.Object({ title, body, files }),
 	},
 ];
 

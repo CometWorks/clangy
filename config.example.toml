@@ -1,6 +1,8 @@
 # Copy to config.toml and adjust. See docs/configuration.md.
 
 data_dir = "/srv/clangy"
+# Tickets, notes and plans; defaults to <data_dir>/workspace
+# workspace_dir = "/srv/clangy-workspace"
 discord_token = ""
 run_deadline = 600.0
 attachment_max_bytes = 26214400
@@ -118,7 +120,7 @@ url = "https://github.com/blader/humanizer.git"
 
 [[knowledge.se1]]
 link = "knowledge/skills"
-path = "/home/clangy/skills/skills"
+path = "/home/clangy/repos/CometWorks/skills/skills"
 
 [[knowledge.se1]]
 link = "knowledge/books"
@@ -130,11 +132,11 @@ path = "/home/clangy/.se-dev"
 
 [[knowledge.se2]]
 link = "knowledge/skills"
-path = "/home/clangy/skills2/skills"
+path = "/home/clangy/repos/CometWorks/skills2/skills"
 
 [[knowledge.se2]]
 link = "knowledge/books"
-path = "/home/clangy/se2-dev-books/skills"
+path = "/home/clangy/forgejo/se2-dev-books/skills"
 
 [[knowledge.se2]]
 link = ".se2-dev"
