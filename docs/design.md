@@ -39,7 +39,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 - With `initial_delay`, the first answer to a new forum thread waits until the thread has been quiet that long; every message, edit or deletion restarts the wait, and nothing is posted meanwhile. A mention cancels the wait and is answered right away. A wait cut short by a restart is dropped.
 - A mention in a thread Clangy doesn't know yet (started before it ran, or by someone else in a text channel) starts a conversation in that thread, with the whole thread as context, read from Discord. A thread is one conversation, and its first post is often the request itself. Clangy's own answers in it come along as `Clangy (you): text`, without the footer; its progress and error messages and v1's answers (which have no footer) don't.
 - Without context Clangy doesn't answer: if the history can't be read, it logs an error and stays silent.
-- Nothing is answered after the fact: messages posted while Clangy was down are context for later mentions, never triggers. After every gateway (re)connect, the first message in a known thread first reads from Discord what was posted there since the newest message Clangy has, and queues it ahead of that message.
+- Nothing is answered after the fact: messages posted while Clangy was down are context for later mentions, never triggers. After every gateway (re)connect, the first message in a known thread first reads all of the thread from Discord and queues ahead of that message what the conversation doesn't have yet: what was posted while Clangy was down, and, as earlier messages for reference, older messages it never read, such as the start of a thread that an older version joined on a mention without reading it.
 - `record` channels also append every message to `store/records/<thread>.md`, without inference, so other conversations can find requests later. A record expires `retention_days` after its last message (see Retention).
 
 ### Context and the message cache
@@ -50,7 +50,7 @@ A message that the mention or its context replies to comes along even if it is o
 
 ### Edits and deletions
 
-Clangy remembers the author, text and time of every message in its conversations (`known` in `state.json`). An edit or deletion of a message still waiting for the next run updates or removes it in the queue. For a message the model has already seen, or one the running answer is working from, the next run gets a `[host]` note: the new text, or the deleted text with an instruction to disregard it. A running answer is never interrupted. Edits don't trigger answers, even if they add a mention. Clangy ignores edits of its own messages and edits that only add link previews. In `record` channels edits and deletions are logged to the record too.
+Clangy remembers the author, text and time of every message in its conversations, its own answers included (`known` in `state.json`), until the conversation expires (see Retention). An edit or deletion of a message still waiting for the next run updates or removes it in the queue. For a message the model has already seen, or one the running answer is working from, the next run gets a `[host]` note: the new text, or the deleted text with an instruction to disregard it. A running answer is never interrupted. Edits don't trigger answers, even if they add a mention. Clangy ignores edits of its own messages and edits that only add link previews. In `record` channels edits and deletions are logged to the record too.
 
 ## Sandbox
 
@@ -214,6 +214,8 @@ The host socket is bound through `/proc/self/fd/<dir fd>/host.sock` and pi conne
 - `files/`: `received/` attachments, `sent/<run>/` files sent in answers, `outbox/` while a run is staging files. Host only.
 - `work/`: the sandbox's folder: the files the agent writes (`out/`), the `attachments`, `store`, `guide` and knowledge links, `.pi/` (session, its snapshot `session.bak` from before the current run, system prompt, pi config) and, during a run, `.clangy/host.sock` and `.clangy/proxy.sock`.
 - `metrics.jsonl`: per-request token and timing stats.
+
+If a conversation has answers but its pi session file is gone, for example because it was deleted by hand, Clangy notices on startup and queues all of its known messages as earlier messages for reference, Clangy's answers as `Clangy (you)`, with the game's knowledge note and, at the next message, the forum title. The next run starts a new session that has the whole conversation again. Answers posted before Clangy kept its own answers in `known` are read back from the thread.
 
 ### Retention
 

@@ -4,6 +4,7 @@ import os
 import shutil
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import aiohttp
@@ -721,9 +722,66 @@ async def test_known_thread_reads_what_was_posted_while_offline(config, chat):
     await second.on_message(message(1045, "Any news?", parent_id=QUIET_FORUM, id=1049))
     await second.on_message(message(1045, "@Clangy hello?", parent_id=QUIET_FORUM, id=1050, mentions_bot=True))
     await second.wait_idle()
-    assert chat.history_calls == [(1045, 1049, None, datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc))]
+    assert chat.history_calls == [(1045, 1049, None, None)], "all of the thread"
     lines = [line for line in agent.prompts[0].splitlines() if not line.startswith("[host]")]
     assert lines == ["Alice: Question", "Bob: Missed", "Bob: Missed too", "Alice: Any news?", "Alice: @Clangy hello?"]
+    await second.close()
+
+
+async def test_known_thread_reads_the_messages_it_never_had(config, chat):
+    first = Clangy(config, chat, run_agent=FakeAgent())
+    # An older version read none of the thread before the mention
+    await first.on_message(message(1170, "@Clangy Linux only?", parent_id=QUIET_FORUM, id=1172, mentions_bot=True))
+    await first.wait_idle()
+    [answer] = chat.in_channel(1170)
+    await first.close()
+    post = message(1170, "Laser antennas don't work", parent_id=QUIET_FORUM, id=1170, author="Carol")
+    post.created -= timedelta(days=6)
+    chat.channel_history[1170] = [
+        post,
+        message(1170, "@Clangy Linux only?", parent_id=QUIET_FORUM, id=1172),
+        message(1170, answer.current, parent_id=QUIET_FORUM, id=answer.message_id, author="Clangy", from_self=True),
+    ]
+    agent = FakeAgent()
+    second = Clangy(config, chat, run_agent=agent)
+    await second.load()
+    await second.on_message(message(1170, "@Clangy check the code", parent_id=QUIET_FORUM, id=1173, mentions_bot=True))
+    await second.wait_idle()
+    lines = [line for line in agent.prompts[0].splitlines() if not line.startswith("[host] 2026")]
+    assert lines == [
+        "[host] Earlier messages, for reference only. Don't answer them; "
+        "use them only where the messages after them refer to them:",
+        "Carol: Laser antennas don't work",
+        "[host] End of the earlier messages.",
+        "Alice: @Clangy check the code",
+    ], "the session still has the mention and the answer"
+    await second.close()
+
+
+async def test_lost_session_brings_the_known_conversation_back(config, chat):
+    first = Clangy(config, chat, run_agent=FakeAgent())
+    await first.on_message(forum_post(SE1_FORUM, 1175, "My game crashes", author="Carol"))
+    await first.wait_idle()
+    [answer] = chat.in_channel(1175)
+    await first.close()
+    (config.data_dir / "conversations" / "1175" / "work" / ".pi" / "session.jsonl").unlink()
+    chat.channel_history[1175] = [
+        message(1175, "My game crashes", parent_id=SE1_FORUM, id=1175, author="Carol"),
+        message(1175, answer.current, parent_id=SE1_FORUM, id=answer.message_id, author="Clangy", from_self=True),
+    ]
+
+    agent = FakeAgent()
+    second = Clangy(config, chat, run_agent=agent)
+    await second.load()
+    assert [m.text for m in second.conversations[1175].pending] == ["My game crashes", "Default answer."]
+    mention = message(1175, "@Clangy still?", parent_id=SE1_FORUM, author="Carol", mentions_bot=True)
+    await second.on_message(replace(mention, thread_name="Post"))
+    await second.wait_idle()
+    prompt = agent.prompts[0]
+    assert core.knowledge_note_start("se1") in prompt and "title of the forum post: Post" in prompt
+    lines = [line for line in prompt.splitlines() if line.startswith(("Carol", "Clangy"))]
+    assert lines == ["Carol: My game crashes", "Clangy (you): Default answer.", "Carol: @Clangy still?"]
+    assert prompt.index("Carol: My game crashes") < prompt.index("End of the earlier messages")
     await second.close()
 
 
