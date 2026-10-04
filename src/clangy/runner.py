@@ -78,21 +78,25 @@ class RunResult:
     """Tools called during the run, in order."""
 
 
-def write_pi_config(paths: RunPaths, backend: BackendConfig, port: int) -> None:
+def write_pi_config(paths: RunPaths, backend: BackendConfig, port: int, context_window: int) -> None:
     """Writes pi's model and settings files, pointing inference at the host bridge."""
     paths.agent_dir.mkdir(parents=True, exist_ok=True)
+    compat = {"supportsDeveloperRole": False, **backend.compat}
+    if "openrouter.ai" in backend.url:
+        # pi can't tell from the bridge's URL; this makes thinking OpenRouter's reasoning effort, "off" is "none"
+        compat.setdefault("thinkingFormat", "openrouter")
     model = {
         "id": PI_MODEL,
         # pi sends a thinkingFormat's "thinking off" only to reasoning models; without it Qwen thinks by default
-        "reasoning": backend.thinking != "off" or "thinkingFormat" in backend.compat,
-        "contextWindow": backend.context_window,
+        "reasoning": backend.thinking != "off" or "thinkingFormat" in compat,
+        "contextWindow": min(context_window, backend.context_window),
         "maxTokens": backend.max_tokens,
     }
     provider = {
         "baseUrl": f"http://127.0.0.1:{port}/v1",
         "api": "openai-completions",
         "apiKey": "unused",
-        "compat": {"supportsDeveloperRole": False, **backend.compat},
+        "compat": compat,
         "models": [model],
     }
     models = {"providers": {"clangy": provider}}

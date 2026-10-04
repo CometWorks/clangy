@@ -3,6 +3,8 @@
 data_dir = "/home/clangy/data"
 discord_token = ""
 run_deadline = 900.0
+# Caps the context on every backend; unset means the smallest backend context_window
+# context_window = 131072
 
 [sandbox]
 firejail = true
@@ -53,14 +55,14 @@ gen_tps = 50.0
 # parallel = 2              # a run makes roughly 7-11 requests
 # context_window = 262144
 # max_tokens = 4096
-# thinking = "off"
+# thinking = "minimal"     # becomes the reasoning effort; Qwen3.8-27B skips the setup checklist without it
 # prompt_tps = 2000.0
 # gen_tps = 60.0
 # first_byte_timeout = 60
 # stall_timeout = 60
 # cooldown = 60
 # # OpenRouter falls back within a request, to at most 3 models
-# extra_body = { models = ["qwen/qwen3.8-27b:free", "nvidia/nemotron-3-super-120b-a12b:free", "google/gemma-4-31b-it:free"], reasoning = { effort = "minimal" } }
+# extra_body = { models = ["qwen/qwen3.8-27b:free", "nvidia/nemotron-3-super-120b-a12b:free", "google/gemma-4-31b-it:free"] }
 
 # Paid OpenRouter models, used only while the others fail or are busy, the cheaper one first. The key needs a credit limit above 0.
 # [[backends]]
@@ -79,7 +81,6 @@ gen_tps = 50.0
 # first_byte_timeout = 60
 # stall_timeout = 60
 # cooldown = 60
-# extra_body = { reasoning = { effort = "minimal" } }
 
 # A second paid model, more expensive per answer than gpt-6-luna.
 # [[backends]]
@@ -98,7 +99,6 @@ gen_tps = 50.0
 # first_byte_timeout = 60
 # stall_timeout = 60
 # cooldown = 60
-# extra_body = { reasoning = { effort = "minimal" } }
 
 # Chat channel: a mention starts a thread with Clangy
 [[channels]]

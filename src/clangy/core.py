@@ -778,7 +778,7 @@ class Clangy:
         for _ in range(2):
             paths, read_only = self._prepare_work_dir(conv)
             port = free_port()
-            write_pi_config(paths, backend.config, port)
+            write_pi_config(paths, backend.config, port, self.config.context_limit())
             slot = await backend.take_slot(self.http, conv.key, time.monotonic())
             run = ProxyRun(backend=backend, session=self.http, tools=self._tool_handler(conv), slot=slot)
             run.stats = stats
