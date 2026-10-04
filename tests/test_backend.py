@@ -10,16 +10,16 @@ def config(**kwargs) -> BackendConfig:
     return BackendConfig(name="b", url="http://127.0.0.1:1/v1", model="m", **kwargs)
 
 
-async def test_queue_positions_and_parallel_limit():
+async def test_runs_ahead_and_parallel_limit():
     backend = Backend(config(parallel=1))
     await backend.acquire("a")
     second = asyncio.create_task(backend.acquire("b"))
     third = asyncio.create_task(backend.acquire("c"))
     await asyncio.sleep(0.01)
-    assert [backend.queue_position(c) for c in "abc"] == [0, 1, 2]
+    assert [backend.ahead_of(c) for c in "abcd"] == [0, 1, 2, 3]
     await backend.release("a")
     await second
-    assert backend.queue_position("c") == 1
+    assert backend.ahead_of("c") == 1
     assert not third.done()
     await backend.release("b")
     await third

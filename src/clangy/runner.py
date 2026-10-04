@@ -25,16 +25,6 @@ PI_MODEL = "clangy"
 """The model id pi sees on every backend; the host sets the real one. pi turns the reasoning of another model's
 turns into plain text, which would happen whenever a conversation moves between backends."""
 
-TOOL_STATES = {
-    "bash": "analyzing",
-    "set_game": "loading the game knowledge",
-    "attach_files": "preparing files",
-    "ticket_create": "filing a ticket",
-    "ticket_add_report": "updating a ticket",
-    "note_create": "writing a note",
-    "plan_create": "writing a plan",
-}
-
 
 @dataclass
 class RunPaths:
@@ -169,22 +159,6 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def event_state(event: dict) -> str | None:
-    """Plain-language progress state for a pi JSON event, if it changes the state."""
-    match event.get("type"):
-        case "turn_start":
-            return "reading"
-        case "tool_execution_start":
-            return TOOL_STATES.get(event.get("toolName", ""), "looking things up")
-        case "message_update":
-            kind = event.get("assistantMessageEvent", {}).get("type", "")
-            if kind.startswith("thinking"):
-                return "thinking"
-            if kind.startswith("text"):
-                return "writing"
-    return None
-
-
 def final_result(event: dict) -> RunResult:
     """Extracts the answer from pi's agent_end event."""
     assistant = [m for m in event.get("messages", []) if m.get("role") == "assistant"]
@@ -199,8 +173,8 @@ def final_result(event: dict) -> RunResult:
     return RunResult(answer=text) if text else RunResult(error="empty answer")
 
 
-async def run_pi(spec: RunSpec, port: int, deadline: float, on_state: Callable[[str], None]) -> RunResult:
-    """Runs pi until it exits or the deadline (seconds from now) passes."""
+async def run_pi(spec: RunSpec, port: int, deadline: float, on_turn: Callable[[], None]) -> RunResult:
+    """Runs pi until it exits or the deadline (seconds from now) passes; on_turn is called on each model turn."""
     command = build_command(spec, port)
     process = await asyncio.create_subprocess_exec(
         *command,
@@ -222,8 +196,8 @@ async def run_pi(spec: RunSpec, port: int, deadline: float, on_state: Callable[[
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if state := event_state(event):
-                on_state(state)
+            if event.get("type") == "turn_start":
+                on_turn()
             if event.get("type") == "tool_execution_start":
                 tools.append(event.get("toolName", ""))
             if event.get("type") == "agent_end":

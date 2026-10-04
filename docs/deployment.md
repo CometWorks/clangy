@@ -10,6 +10,7 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 | `~/clangy.toml` | The config, mode 600 since it holds the Discord token. `deploy/clangy.toml` is its template; deploys never touch it. |
 | `~/data/` | Conversations, store, metrics. |
 | `~/skills`, `~/skills2`, `~/se-dev-books`, `~/se2-dev-books`, `~/.se-dev`, `~/.se2-dev` | The prepared knowledge, used in place. |
+| `~/repos/` | Ecosystem and plugin repositories, mounted read-only into every conversation as `repos`; `~/repos/clone-or-pull` updates them daily. |
 | `~/.pi/agent/bin/pi` | pi, installed by its own installer, with Node.js under `~/.local/share/pi-node`. |
 | `~/.local/bin/uv` | uv, only needed by deploys. |
 
@@ -37,11 +38,11 @@ From a working copy with SSH access to `clangy@nas`:
 deploy/deploy.sh
 ```
 
-It rsyncs the working copy (without `.git`, `.venv`, `data/` and a local `config.toml`), runs `uv sync`, links and enables `deploy/clangy.service`, and restarts the service if it's running.
+The host defaults to `clangy@nas`, another one can be given as the first argument. It rsyncs the working copy (without `.git`, `.venv`, `data/` and a local `config.toml`), runs `uv sync`, links and enables `deploy/clangy.service`, and restarts the service if it's running.
 
 ## Run
 
-Set `discord_token` in `~/clangy.toml` and the channels to serve. For the OpenRouter backend, uncomment it in `~/clangy.toml` and put the key into its `api_key`; the unit has no environment file. Then on the host:
+Set `discord_token` in `~/clangy.toml` and the channels to serve. For the OpenRouter backends (the free models and the paid fallback), uncomment them in `~/clangy.toml` and put the key into their `api_key`; the unit has no environment file. Then on the host:
 
 ```bash
 systemctl --user start clangy
@@ -65,6 +66,21 @@ Logs:
 ```bash
 journalctl --user -u clangy -f
 ```
+
+## Commands
+
+```
+clangy [--config FILE] run | check | sync-knowledge | timings
+```
+
+| Command | Does |
+|---|---|
+| `run` | The bot. Refuses to start (exit status 78) without a working sandbox or a Discord token. |
+| `check` | Self-test without Discord, see below. |
+| `sync-knowledge` | Mirrors the knowledge sources given by `url`, see Knowledge. |
+| `timings` | Summarizes the `metrics.jsonl` of all conversations. |
+
+`--config` defaults to `config.toml` in the working directory.
 
 ## Checks on the host
 

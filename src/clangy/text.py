@@ -83,7 +83,7 @@ def timestamp(unix: float) -> str:
 def progress(eta: float, deadline: float | None, ahead: int, now: float) -> str:
     """Progress message: just the expected time, with details only when something is off."""
     if eta <= now:
-        late = f"⏳ Taking longer than expected"
+        late = "⏳ Taking longer than expected"
         return f"{late}, deadline {timestamp(deadline)}." if deadline is not None else f"{late}."
     if ahead:
         others = "answer" if ahead == 1 else "answers"

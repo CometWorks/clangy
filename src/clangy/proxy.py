@@ -1,6 +1,6 @@
 """Per-run host server on a unix socket: the sandbox's only way out.
 
-It forwards chat completions to the conversation's pinned backend, holding the API key on the host,
+It forwards chat completions to the run's backend, holding the API key on the host,
 and serves the host-side tools (tickets, notes, plans, game version).
 """
 

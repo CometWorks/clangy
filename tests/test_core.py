@@ -72,10 +72,10 @@ class FakeAgent:
     def prompts(self) -> list[str]:
         return [s.prompt for s in self.specs]
 
-    async def __call__(self, spec: RunSpec, port: int, deadline: float, on_state) -> RunResult:
+    async def __call__(self, spec: RunSpec, port: int, deadline: float, on_turn) -> RunResult:
         self.specs.append(spec)
-        self.on_state = on_state
-        on_state("reading")
+        self.on_turn = on_turn
+        on_turn()
         step = self.script.pop(0) if self.script else answer("Default answer.")
         return await step(self, spec)
 
@@ -207,8 +207,7 @@ async def test_progress_says_when_it_takes_longer(bot, chat, monkeypatch):
     release = asyncio.Event()
 
     async def slow(agent: FakeAgent, spec: RunSpec) -> RunResult:
-        agent.on_state("looking things up")
-        agent.on_state("reading")
+        agent.on_turn()
         await release.wait()
         return await answer("Done.")(agent, spec)
 

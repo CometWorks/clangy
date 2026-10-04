@@ -4,7 +4,7 @@ import textwrap
 from pathlib import Path
 
 from clangy.config import BackendConfig, SandboxConfig
-from clangy.runner import RunPaths, RunSpec, build_command, event_state, final_result, run_pi, write_pi_config
+from clangy.runner import RunPaths, RunSpec, build_command, final_result, run_pi, write_pi_config
 
 BACKEND = BackendConfig(name="b", url="http://x/v1", model="qwen", thinking="low", compat={"thinkingFormat": "qwen"})
 
@@ -45,15 +45,6 @@ def test_pi_config_points_at_the_bridge(tmp_path):
     assert settings["retry"]["enabled"] is False
 
 
-def test_event_states():
-    assert event_state({"type": "turn_start"}) == "reading"
-    assert event_state({"type": "tool_execution_start", "toolName": "grep"}) == "looking things up"
-    assert event_state({"type": "tool_execution_start", "toolName": "ticket_create"}) == "filing a ticket"
-    update = {"type": "message_update", "assistantMessageEvent": {"type": "thinking_delta"}}
-    assert event_state(update) == "thinking"
-    assert event_state({"type": "agent_start"}) is None
-
-
 def test_final_result():
     def end(*messages):
         return {"type": "agent_end", "messages": list(messages)}
@@ -87,16 +78,16 @@ async def test_run_pi_parses_events(tmp_path):
         emit({"type": "agent_end", "messages": [{"role": "assistant", "content": [{"type": "text", "text": "Hi"}]}]})
         """,
     )
-    states = []
-    result = await run_pi(spec(tmp_path, sandbox), 1, 10.0, states.append)
+    turns = []
+    result = await run_pi(spec(tmp_path, sandbox), 1, 10.0, lambda: turns.append(1))
     assert result.answer == "Hi"
     assert result.tools == ["grep"]
-    assert states == ["reading", "looking things up", "writing"]
+    assert turns == [1]
 
 
 async def test_run_pi_deadline(tmp_path):
     sandbox = fake_pi(tmp_path, "import time; time.sleep(30)")
-    result = await run_pi(spec(tmp_path, sandbox), 1, 0.3, lambda s: None)
+    result = await run_pi(spec(tmp_path, sandbox), 1, 0.3, lambda: None)
     assert result.timed_out and result.answer is None
 
 

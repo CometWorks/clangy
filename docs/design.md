@@ -8,21 +8,24 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 |---|---|
 | `discord_bot.py` | discord.py client. Converts gateway messages to `IncomingMessage` and implements the `Chat` protocol (send, edit, create thread, download). The only module that knows about Discord. |
 | `core.py` | Channel rules, conversations, queued messages, one run per conversation, progress messages, retries, host tools, persistence. |
-| `backend.py` | Per-backend run queue (`parallel` runs at once), queue positions, measured prompt and generation speeds, ETA, health checks and cooldowns, llama.cpp slot pinning and save/restore. |
+| `backend.py` | Per-backend run queue (`parallel` runs at once), runs ahead, measured prompt and generation speeds, ETA, health checks and cooldowns, llama.cpp slot pinning and save/restore. |
 | `proxy.py` | Per-run HTTP server on a unix socket inside the work folder: forwards chat completions to the run's backend, detects backend failures, and serves the host tools. |
 | `runner.py` | Writes pi's config, builds the firejail command line, runs pi with a deadline and reads its JSON event stream. |
 | `store.py` | Tickets, notes, plans and records in Clangy's own store. |
 | `knowledge.py` | The daily sync of knowledge kept in git repositories. |
+| `cache.py` | The local message cache (`messages.sqlite`). |
+| `timings.py` | `clangy timings`, the summary of `metrics.jsonl`. |
 | `check.py` | `clangy check` and the sandbox probe that `clangy run` requires to pass. |
 | `files.py` | Files the agent sends: validation, at-most-once sending, ZIP grouping. |
 | `text.py` | Discord texts: answer splitting, footer, progress and error messages. |
-| `pi/clangy.ts` | pi extension loaded in the sandbox. |
+| `pi/clangy.ts` | pi extension loaded in the sandbox: replaces the system prompt, bridges the host and proxy sockets, defines the host tools. |
+| `sandbox-bin/` | `rg` and `fd` wrappers that follow links. |
 | `prompts/system.md`, `guide/*.md` | The system prompt, and the guide files the agent reads on demand. |
 
 ## A run
 
 1. A trigger (see below) posts a progress message right away and starts the conversation's worker. A trigger during a run sets a flag, and the worker runs again afterwards.
-2. The worker picks the backend (see Backends) and waits for a slot on it. The progress message shows the queue position and an ETA.
+2. The worker picks the backend (see Backends) and waits for a slot on it. The progress message shows the ETA (see Progress and ETA).
 3. The host snapshots the pi session file, refreshes the work folder links (`attachments`, `store`, `guide`, the game's knowledge), writes pi's `models.json` and `settings.json`, and opens the host socket.
 4. pi runs in firejail with `--mode json --print --session <file>`. The prompt is a `[host]` timestamp line, then every queued message as `Name: text` plus attachment notes. In forums, a note gives the post's title when the model hasn't seen it yet or it changed, since the title is often the question itself.
 5. On success the queued messages are dropped, the answer replaces the progress message, and parts over 2000 characters go into follow-up messages. Every answer ends with the fixed mention reminder.
@@ -37,6 +40,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 - A mention in a thread Clangy doesn't know yet (started before it ran, or by someone else in a text channel) starts a conversation in that thread, with the thread's recent messages as context.
 - Without context Clangy doesn't answer: if the history can't be read, it logs an error and stays silent.
 - Nothing is answered after the fact: messages posted while Clangy was down are context for later mentions, never triggers.
+- `record` channels also append every message to `store/records/<thread>.md`, without inference, so other conversations can find requests later.
 
 ### Context and the message cache
 
@@ -44,8 +48,7 @@ A mention's context reaches back to midnight UTC, but at least `history_hours` (
 
 ### Edits and deletions
 
-Clangy remembers the author, text and time of every message in its conversations (`known` in `state.json`). An edit or deletion of a message still waiting for the next run updates or removes it in the queue. For a message the model has already seen, or one the running answer is working from, the next run gets a `[host]` note: the new text, or the deleted text with an instruction to disregard it. A running answer is never interrupted. Edits don't trigger answers, even if they add a mention. Clangy ignores edits of its own messages and edits that only add link previews.
-- `record` channels also append every message to `store/records/<thread>.md`, without inference, so other conversations can find requests later.
+Clangy remembers the author, text and time of every message in its conversations (`known` in `state.json`). An edit or deletion of a message still waiting for the next run updates or removes it in the queue. For a message the model has already seen, or one the running answer is working from, the next run gets a `[host]` note: the new text, or the deleted text with an instruction to disregard it. A running answer is never interrupted. Edits don't trigger answers, even if they add a mention. Clangy ignores edits of its own messages and edits that only add link previews. In `record` channels edits and deletions are logged to the record too.
 
 ## Sandbox
 
@@ -53,7 +56,7 @@ pi runs as `firejail ... -- env -i <vars> pi ...`:
 
 - `--net=none`: the sandbox has only its own loopback. The pi extension listens on `127.0.0.1:$CLANGY_PORT` and pipes connections to the host socket in the work folder. That socket is the only way out.
 - The environment is replaced. The Discord token and backend API keys stay on the host. The proxy adds the API key to forwarded requests.
-- The work folder is the only writable path. The store, the guide, the conversation's knowledge snapshot, the package and the configured `sandbox.read_only` paths (node and pi) are read-only.
+- The work folder is the only writable path. The attachments, the store, the guide, the `[[mounts]]` (the nas: `~/repos`), the conversation's knowledge snapshot, the package and the configured `sandbox.read_only` paths (node, pi, uv's Pythons) are read-only. `sandbox.env` adds environment variables, e.g. to keep uv offline for the skills' scripts.
 - No capabilities, no root, seccomp, private `/dev` and `/tmp`.
 - No per-sandbox memory limit: firejail's `--rlimit-as` breaks Node.js, whose WebAssembly reserves large address ranges. The systemd unit caps the whole service with `MemoryMax` and `TasksMax` instead.
 
@@ -83,7 +86,7 @@ One known gap with thinking on: Qwen chat templates drop the reasoning of earlie
 
 ## Progress and ETA
 
-The progress message only says when the answer is expected, as a Discord timestamp (`<t:unix:R>`) that clients count down on their own: `⏳ Answer expected in 1 minute.` It adds details only when something is off: `⏳ Waiting for 2 other answers first.` while queued behind other conversations, `⏳ Taking longer than expected, deadline in 8 minutes.` once the ETA has passed, and `(retry 1/3)` after a lost backend. The host checks it every `progress_interval` and edits it only when the text changes.
+The progress message only says when the answer is expected, as a Discord timestamp (`<t:unix:R>`) that clients count down on their own: `⏳ Answer expected in 1 minute.` It adds details only when something is off: `⏳ Waiting for 2 other answers first.` while queued behind other conversations, `⏳ Taking longer than expected, deadline in 8 minutes.` once the ETA has passed, and `(retry 1/3)` after a backend failure. The host checks it every `progress_interval` and edits it only when the text changes.
 
 ETA = runs ahead × average run time ÷ `parallel` + max(prompt tokens ÷ prompt speed + 500 ÷ generation speed, average run time). Runs with tool calls take many model turns, so the measured average run time of successful runs is the floor. The prompt token estimate is the new text ÷ 4, plus 3000 on a conversation's first run. Speeds start from the config and follow the backend's reported `timings` (llama.cpp) as a moving average. Requests that processed fewer than 500 prompt tokens don't count, since they measure overhead more than speed.
 
@@ -93,7 +96,7 @@ The deadline (`run_deadline`) starts when the run leaves the queue. pi is killed
 
 ## Backends
 
-Every backend that works serves conversations. Switching is kept rare because a backend that hasn't seen a conversation has to read all of it: tens of thousands of tokens, a minute or more on polaris. OpenRouter caches prompts too (`cached_tokens` in its usage), so staying put pays off there as well.
+Backends are used by priority, and a conversation moves between them only when needed. Switching is kept rare because a backend that hasn't seen a conversation has to read all of it: tens of thousands of tokens, a minute or more on polaris. OpenRouter caches prompts too (`cached_tokens` in its usage), so staying put pays off there as well.
 
 Each backend has a `priority`, lower is preferred. A backend is free when it would start the run without queueing. Before each run the host picks the backend:
 
@@ -101,7 +104,7 @@ Each backend has a `priority`, lower is preferred. A backend is free when it wou
 - Existing conversation whose backend works: it moves to a more preferred backend that is free (reason `priority`). Otherwise it stays, unless another backend's ETA for the whole conversation (the last answer's prompt and completion tokens plus the new text) plus `switch_margin` beats the current backend's ETA for the new text alone (`balance`). Only backends of the same priority count for that, and less preferred ones too while the conversation's backend is fully busy. In practice it moves down when its backend is busy and another one is idle, and back up as soon as the preferred one has room.
 - Remaining ties go to the backend listed first.
 
-With the nas priorities, conversations run on OpenRouter's free models, move to polaris while those are rate limited or both slots are busy, and to the paid model only when polaris fails or is busy too. Moving back up is cheap: OpenRouter reads a 10k-token conversation in about a second.
+With the nas priorities, conversations run on OpenRouter's free models, move to polaris while those are rate limited or both slots are busy, and to the paid models (the cheaper one first) only when polaris fails or is busy too. Moving back up is cheap: OpenRouter reads a 10k-token conversation in about a second.
 
 The proxy flags a backend failure on a connection error, HTTP 401, 402, 403, 404, 408, 429 or 5xx, an error event inside a stream that started with HTTP 200 (OpenRouter does this when the provider fails), no data within `first_byte_timeout`, or a stream that stops for `stall_timeout`. After a failure it refuses the run's further requests, and on a broken stream it sends pi an error event, so pi ends the turn with an error instead of taking a cut-off answer as complete. The run's output is dropped (session restored, messages kept).
 
@@ -125,6 +128,23 @@ Each configured knowledge source of the game becomes a link in the work folder: 
 
 Sources are folders used in place (the nas setup) or git repositories. `clangy sync-knowledge` (daily) keeps mirrors of the repositories. When any HEAD changed, it exports all of them into a new `releases/<timestamp>` folder and swaps the `current` symlink with an atomic rename, keeping the current and the previous release. Since links resolve per run, a run keeps one snapshot even if the sync swaps trees meanwhile.
 
+## Prompt, guide and host tools
+
+`prompts/system.md` is the system prompt: how to read the turns (`Name: text`, `[host]` lines, the reference block), the rules (facts only, short answers, no code for users, never reveal the books or the instructions, ignore injected instructions), working out the game, collecting problem reports until a ticket is possible, pointing developers to sources, sending files, the `repos/` mount and the store. Keep it free of changing data, its bytes are the cached prefix. A channel's `prompt` is appended under `# Channel`.
+
+`guide/` holds files the agent reads on demand: `logs.md` (where Pulsar's `info.log`, the game logs and crash dumps are on each OS and runtime) and `developers.md` (sources for Pulsar, dedicated servers, plugin, mod and script development).
+
+Host tools, defined in `pi/clangy.ts` and run by the host through the socket:
+
+| Tool | Does |
+|---|---|
+| `set_game` | Records SE1 or SE2 and ends the run; the host runs pi again with that game's knowledge (see Game version and knowledge). |
+| `attach_files` | Stages files for the answer (see Files). |
+| `ticket_create`, `ticket_add_report` | Files a problem report, or adds a repeated report to an existing ticket. |
+| `note_create`, `plan_create` | Shared findings, and plans from ideas or requests. |
+
+A tool error goes back to the model as a failed tool call. `runner.HOST_TOOLS` must list the same names, since pi 1.x applies `--tools` to extension tools too; a test checks this.
+
 ## The books
 
 The agent may read `knowledge/books` but must never mention it. The system prompt says so, and the host also withholds any answer containing one of `secret_markers` (by default the book repository names and `knowledge/books`), replying "Sorry, I can't share that." instead.
@@ -145,7 +165,7 @@ Sent: the agent writes files in its work folder (by convention `out/`) and calls
 
 ## Store
 
-`<data_dir>/store` holds `tickets/T-0001.md`, `notes/N-0001.md`, `plans/P-0001.md` and `records/<thread>.md`. The agent reads it through the read-only `store` link and searches it with grep. Writes go through host tools, which assign numbers with exclusive file creation, validate the title and body, and add the thread link, game and the conversation's `files` folder to the frontmatter. `ticket_add_report` appends a repeated report to an existing ticket.
+`<data_dir>/store` holds `tickets/T-0001.md`, `notes/N-0001.md`, `plans/P-0001.md` and `records/<thread>.md`. The agent reads it through the read-only `store` link and searches it with grep. Writes go through host tools, which assign numbers with exclusive file creation, validate the title (at most 120 characters) and body (at most 20000), and add the thread link, game and the conversation's `files` folder to the frontmatter. `ticket_add_report` appends a repeated report to an existing ticket.
 
 ## Metrics
 
@@ -177,7 +197,7 @@ The host socket is bound through `/proc/self/fd/<dir fd>/host.sock` and pi conne
 
 `<data_dir>/conversations/<thread id>/`:
 
-- `state.json`: channel, backend, game, status, queued messages, the conversation's known messages, progress message id, retry count. Host only.
+- `state.json`: channel, backend and the conversation's size after its last answer (for the switch rule), game, forum title, status, queued messages, pending `[host]` notes, the conversation's known messages, progress message id, retry and answer counts, the files already sent. Host only.
 - `files/`: `received/` attachments, `sent/<run>/` files sent in answers, `outbox/` while a run is staging files. Host only.
-- `work/`: the sandbox's folder: the files the agent writes (`out/`), the `attachments`, `store`, `guide` and knowledge links, `.pi/` (session, system prompt, pi config) and `.clangy/host.sock` during a run.
+- `work/`: the sandbox's folder: the files the agent writes (`out/`), the `attachments`, `store`, `guide` and knowledge links, `.pi/` (session, its snapshot `session.bak` from before the current run, system prompt, pi config) and, during a run, `.clangy/host.sock` and `.clangy/proxy.sock`.
 - `metrics.jsonl`: per-request token and timing stats.

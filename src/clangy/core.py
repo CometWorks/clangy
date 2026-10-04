@@ -107,7 +107,7 @@ class Conversation(BaseModel):
         return f"https://discord.com/channels/{self.guild_id}/{self.thread_id}"
 
 
-RunAgent = Callable[[RunSpec, int, float, Callable[[str], None]], Awaitable[RunResult]]
+RunAgent = Callable[[RunSpec, int, float, Callable[[], None]], Awaitable[RunResult]]
 
 
 @dataclass
@@ -645,13 +645,12 @@ class Clangy:
             )
             remaining = max(1.0, (progress.deadline or 0) - time.time())
 
-            def on_state(state: str) -> None:
-                if state == "reading":
-                    progress.steps += 1
+            def on_turn() -> None:
+                progress.steps += 1
 
             async with HostServer(run, paths.socket):
                 async with proxy_relay(self.config.sandbox, paths):
-                    result = await self.run_agent(spec, port, remaining, on_state)
+                    result = await self.run_agent(spec, port, remaining, on_turn)
             tools += result.tools
             result.tools = tools
             if conv.game == game or result.timed_out or stats.backend_failed:

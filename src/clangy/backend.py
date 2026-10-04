@@ -57,12 +57,6 @@ class Backend:
         queued = self._waiting.index(conversation) if conversation in self._waiting else len(self._waiting)
         return len(self._running) + queued if len(self._running) + queued >= self.config.parallel else 0
 
-    def queue_position(self, conversation: str) -> int:
-        """Number of runs ahead of this conversation in the queue, 0 once it is running."""
-        if conversation in self._running or conversation not in self._waiting:
-            return 0
-        return self._waiting.index(conversation) + 1
-
     async def acquire(self, conversation: str) -> None:
         async with self._changed:
             self._waiting.append(conversation)
@@ -84,10 +78,6 @@ class Backend:
         async with self._changed:
             self._running.discard(conversation)
             self._changed.notify_all()
-
-    async def wait_for_change(self) -> None:
-        async with self._changed:
-            await self._changed.wait()
 
     def record_speed(self, prompt_tps: float | None, gen_tps: float | None) -> None:
         if prompt_tps:
