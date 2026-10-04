@@ -56,7 +56,7 @@ const files = Type.Optional(
 const tools = [
 	{
 		name: "set_game",
-		description: "Record which game the conversation is about, once it is clear. Loads the matching knowledge.",
+		description: "Record which game the conversation is about. Loads the matching knowledge.",
 		parameters: Type.Object({ game: Type.Union([Type.Literal("se1"), Type.Literal("se2")]) }),
 	},
 	{
