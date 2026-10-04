@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from clangy.cache import MessageCache
@@ -30,3 +31,38 @@ def test_cache_round_trip_edit_delete_and_window(tmp_path):
     assert not cache.has(101) and cache.has(103)
     cache.close()
     assert MessageCache(tmp_path / "m.sqlite").has(104), "persisted"
+
+
+def test_replies_keep_the_message_they_reply_to(tmp_path):
+    cache = MessageCache(tmp_path / "m.sqlite")
+    cache.add(msg(100, 0, "cached"))
+    reply = msg(101, 5, "reply")
+    reply.replied_to = msg(100, 0, "stale copy sent with the reply")
+    cache.add(reply)
+    old_reply = msg(102, 6, "reply to an old one")
+    old_reply.replied_to = msg(50, -600, "old")
+    cache.add(old_reply)
+    own_reply = msg(103, 7, "reply to Clangy")
+    own_reply.replied_to = msg(51, 1, "Clangy's answer")
+    own_reply.replied_to.from_self = True
+    cache.add(own_reply)
+    found = cache.before(1, None, T0 + timedelta(minutes=1), limit=None)
+    assert [(m.text, m.replied_to and m.replied_to.text) for m in found] == [
+        ("reply", "cached"),
+        ("reply to an old one", "old"),
+        ("reply to Clangy", None),
+    ]
+    assert [m.id for m in cache.before(1, None, None, limit=None)] == [50, 100, 101, 102, 103]
+
+
+def test_old_schema_is_dropped(tmp_path):
+    path = tmp_path / "m.sqlite"
+    old = sqlite3.connect(path)
+    old.execute("create table messages (id integer primary key, channel_id integer, text text)")
+    old.execute("insert into messages values (1, 1, 'old')")
+    old.commit()
+    old.close()
+    cache = MessageCache(path)
+    assert not cache.has(1)
+    cache.add(msg(100, 0))
+    assert cache.get(100) is not None

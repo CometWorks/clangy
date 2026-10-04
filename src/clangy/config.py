@@ -49,7 +49,7 @@ class ChannelConfig(BaseModel):
     initial_delay: float = 0.0
     """Forums: the first answer to a new thread waits until nobody wrote in it for this long."""
     history_messages: int = 100
-    """At most this many earlier messages go along with a mention as context."""
+    """At most this many earlier channel messages go along with a mention as context. Threads go along in full."""
     history_hours: float = 4.0
     """Context reaches back to today's midnight (UTC), but at least this many hours."""
     game: Game | None = None

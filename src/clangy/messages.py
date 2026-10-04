@@ -30,3 +30,5 @@ class IncomingMessage:
     """First message of a forum post."""
     thread_name: str = ""
     attachments: list[Attachment] = field(default_factory=list)
+    replied_to: "IncomingMessage | None" = None
+    """The message this one replies to; a thread started from a channel message points to that message."""
