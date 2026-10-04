@@ -853,7 +853,7 @@ class Clangy:
         return "\n".join(lines)
 
     def skills(self, game: Game) -> list[tuple[str, str, str]]:
-        """Name, description and work folder path of every SKILL.md in the game's knowledge."""
+        """Name, description and work folder path of every SKILL.md under knowledge/: the game's and the mounts'."""
         found = []
         for link, target in self.knowledge_links(game).items():
             if target is None or not link.startswith("knowledge/"):

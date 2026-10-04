@@ -62,7 +62,7 @@ pi runs as `firejail ... -- env -i <vars> pi ...`:
 
 - `--net=none`: the sandbox has only its own loopback. The pi extension listens on `127.0.0.1:$CLANGY_PORT` and pipes connections to the host socket in the work folder. That socket is the only way out.
 - The environment is replaced. The Discord token and backend API keys stay on the host. The proxy adds the API key to forwarded requests.
-- The work folder is the only writable path. The attachments, the store, the guide, the `[[mounts]]` (the nas: `~/repos`), the conversation's knowledge snapshot, the shared Python environment, the package and the configured `sandbox.read_only` paths (node, pi, uv's Pythons) are read-only. `sandbox.env` adds environment variables, e.g. to keep uv offline for the skills' scripts.
+- The work folder is the only writable path. The attachments, the store, the guide, the `[[mounts]]` (the nas: `~/repos` and the humanizer skill), the conversation's knowledge snapshot, the shared Python environment, the package and the configured `sandbox.read_only` paths (node, pi, uv's Pythons) are read-only. `sandbox.env` adds environment variables, e.g. to keep uv offline for the skills' scripts.
 - No capabilities, no root, seccomp, private `/dev` and `/tmp`.
 - No per-sandbox memory limit: firejail's `--rlimit-as` breaks Node.js, whose WebAssembly reserves large address ranges. The systemd unit caps the whole service with `MemoryMax` and `TasksMax` instead.
 
@@ -137,7 +137,9 @@ A restart during a run turns that run's progress message into a failure note. Th
 
 A channel can fix the game (`game = "se1"`). Otherwise the agent asks when it isn't clear and calls `set_game`. The host records it, adds a `[host]` note, and immediately runs pi again in the same session with `knowledge/` linked to the matching tree. The text of the run that called `set_game` is discarded.
 
-When the game is known, the host note lists the skills in its knowledge: every `SKILL.md` up to two folders deep, with the name and description from its frontmatter and its path, like pi's own skill list. The model is told to read the matching `SKILL.md` and follow it. pi's own skill loading isn't used, because Clangy replaces pi's system prompt to keep it cache-stable, and the list depends on the game.
+When the game is known, the host note lists the skills under `knowledge/`: every `SKILL.md` up to two folders deep in the game's knowledge and in the mounts linked there, with the name and description from its frontmatter and its path, like pi's own skill list. The model is told to read the matching `SKILL.md` and follow it. pi's own skill loading isn't used, because Clangy replaces pi's system prompt to keep it cache-stable, and the list depends on the game.
+
+A mount is linked from the first run, before the game is known. The nas mounts the humanizer skill as `knowledge/humanizer`, and the system prompt has the model read it before any answer longer than one sentence.
 
 The knowledge is linked into the work folder, and ripgrep and fd don't follow links by default, so `sandbox-bin/rg` and `sandbox-bin/fd`, first on the sandbox's `PATH`, add `--follow` for pi's grep and find.
 

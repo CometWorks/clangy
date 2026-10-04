@@ -96,4 +96,4 @@ Each source has either `path` or `url`.
 
 ## `[[mounts]]`
 
-Sources like the knowledge ones (`link` plus `path` or `url`), but linked into every conversation whatever the game. The nas mounts `~/repos` as `repos`, the ecosystem and plugin repositories the prompt refers to.
+Sources like the knowledge ones (`link` plus `path` or `url`), but linked into every conversation whatever the game. The nas mounts `~/repos` as `repos`, the ecosystem and plugin repositories the prompt refers to, and the humanizer skill as `knowledge/humanizer`, which the prompt has the model follow. A mount linked under `knowledge/` is listed with the game's skills.
