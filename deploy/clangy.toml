@@ -171,6 +171,11 @@ path = "/home/clangy/se-dev-books/skills"
 link = ".se-dev"
 path = "/home/clangy/.se-dev"
 
+# Writing skill, cloned by ~/repos/clone-or-pull
+[[knowledge.se1]]
+link = "knowledge/humanizer"
+path = "/home/clangy/repos/blader/humanizer"
+
 [[knowledge.se2]]
 link = "knowledge/skills"
 path = "/home/clangy/skills2/skills"
@@ -182,3 +187,8 @@ path = "/home/clangy/se2-dev-books/skills"
 [[knowledge.se2]]
 link = ".se2-dev"
 path = "/home/clangy/.se2-dev"
+
+# Writing skill, cloned by ~/repos/clone-or-pull
+[[knowledge.se2]]
+link = "knowledge/humanizer"
+path = "/home/clangy/repos/blader/humanizer"

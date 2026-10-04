@@ -104,6 +104,8 @@ The prepared folders are used in place, see `[[knowledge.*]]` in `~/clangy.toml`
 
 The code skills run their scripts with `uv run` from their own `.venv`. In the sandbox the skills are read-only and offline, so `sandbox.env` makes uv use the venvs as they are (`UV_NO_SYNC`, `UV_OFFLINE`), and the sandbox may read uv's Python installs (the SE1 skills pin Python 3.11). After copying new skills, build their venvs once as `clangy`, outside the sandbox: run any of their `uv run` commands, or `uv sync --frozen` in each skill folder. Venvs copied from another machine don't work, they point to that machine's Python. Searches work from the prepared indexes; preparing, indexing, downloading and the mod and script listings (which need the installed game) don't work in the sandbox.
 
+The humanizer skill comes from `~/repos/blader/humanizer`, which `~/repos/clone-or-pull` keeps up to date, and is linked as `knowledge/humanizer` for both games.
+
 The clangy user's own pi loads the same skills through `skills` in `~/.pi/agent/settings.json`.
 
 ## llama.cpp backend
