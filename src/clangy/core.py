@@ -144,17 +144,23 @@ def knowledge_note_start(game: Game) -> str:
 
 
 def skill_frontmatter(path: Path) -> tuple[str, str]:
-    """name and description from a SKILL.md's frontmatter."""
+    """name and description from a SKILL.md's frontmatter. A block scalar (| or >) is joined into one line."""
     lines = path.read_text(errors="replace").splitlines()
     if not lines or lines[0].strip() != "---":
         return "", ""
     fields: dict[str, str] = {}
+    key = ""
     for line in lines[1:]:
         if line.strip() == "---":
             break
+        if line[:1].isspace():
+            if key in fields:
+                fields[key] = f"{fields[key]} {line.strip()}".strip()
+            continue
         key, _, value = line.partition(":")
         if key in ("name", "description"):
-            fields[key] = value.strip().strip("\"'")
+            value = value.strip()
+            fields[key] = "" if value[:1] in ("|", ">") else value.strip("\"'")
     return fields.get("name", ""), fields.get("description", "")
 
 
@@ -847,7 +853,7 @@ class Clangy:
         return "\n".join(lines)
 
     def skills(self, game: Game) -> list[tuple[str, str, str]]:
-        """Name, description and work folder path of every SKILL.md in the game's knowledge."""
+        """Name, description and work folder path of every SKILL.md under knowledge/: the game's and the mounts'."""
         found = []
         for link, target in self.knowledge_links(game).items():
             if target is None or not link.startswith("knowledge/"):

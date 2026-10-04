@@ -159,6 +159,11 @@ mode = "record"
 link = "repos"
 path = "/home/clangy/repos"
 
+# Writing skill from ~/repos, linked before the game is known: the prompt has every longer answer use it
+[[mounts]]
+link = "knowledge/humanizer"
+path = "/home/clangy/repos/blader/humanizer"
+
 [[knowledge.se1]]
 link = "knowledge/skills"
 path = "/home/clangy/skills/skills"

@@ -852,18 +852,26 @@ async def test_knowledge_note_lists_the_skills(bot, config, tmp_path):
     books = tmp_path / "srv" / "books"
     (books / "se-dev-game-book").mkdir(parents=True)
     (books / "se-dev-game-book" / "SKILL.md").write_text('---\nname: se-dev-game-book\ndescription: "Handbook"\n---\n')
+    humanizer = tmp_path / "srv" / "humanizer"
+    humanizer.mkdir()
+    (humanizer / "SKILL.md").write_text(
+        "---\nname: humanizer\ndescription: |\n  Rewrite AI-sounding text.\n  Use for prose.\nmetadata:\n  version: 2\n---\n"
+    )
     config.knowledge["se1"] = [
         KnowledgeSource(path=skills, link="knowledge/skills"),
         KnowledgeSource(path=books, link="knowledge/books"),
     ]
+    config.mounts = [KnowledgeSource(path=humanizer, link="knowledge/humanizer")]
     bot.agent.script = [tool("set_game", {"game": "se1"}, answer("")), answer("SE1 answer.")]
     await bot.on_message(forum_post(SUPPORT, 1080, "Do we have foxes in SE1?"))
     await bot.wait_idle()
+    assert bot.agent.specs[0].read_only.count(humanizer) == 1, "a mount is there before the game is known"
     second = bot.agent.prompts[1]
     assert second.startswith("[host] This conversation is about SE1. Its knowledge is under knowledge/.")
     assert "- se-dev: Overview (knowledge/skills/se-dev/SKILL.md)" in second
     assert "- se-dev-game-code: Decompiled game code (knowledge/skills/se-dev-game-code/SKILL.md)" in second
     assert "- se-dev-game-book: Handbook (knowledge/books/se-dev-game-book/SKILL.md)" in second
+    assert "- humanizer: Rewrite AI-sounding text. Use for prose. (knowledge/humanizer/SKILL.md)" in second
     assert second.endswith("Now write your answer to the user's messages; don't refer to earlier drafts.")
     assert bot.conversations[1080].host_notes == []
 
