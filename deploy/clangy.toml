@@ -117,6 +117,43 @@ mode = "support"
 initial_response = true
 initial_delay = 120.0
 
+# Pulsar server: mention channels (1379113958933401701 isn't visible to Clangy yet), chat, agentic, general, linux
+[[channels]]
+id = 1379113958933401701
+mode = "mention"
+
+[[channels]]
+id = 1378846964321357975
+mode = "mention"
+
+[[channels]]
+id = 1446507370296377504
+mode = "mention"
+
+[[channels]]
+id = 1378756729675714642
+mode = "mention"
+
+[[channels]]
+id = 1416689601585741874
+mode = "mention"
+
+# Pulsar server: support forum, answers new threads once they have been quiet for 2 minutes
+[[channels]]
+id = 1382752317106950206
+mode = "support"
+initial_response = true
+initial_delay = 120.0
+
+# Pulsar server: requests and releases forums, recorded
+[[channels]]
+id = 1378847244450533568
+mode = "record"
+
+[[channels]]
+id = 1378847641361977487
+mode = "record"
+
 # Ecosystem and plugin repos for every conversation, kept up to date by ~/repos/clone-or-pull
 [[mounts]]
 link = "repos"
