@@ -400,7 +400,7 @@ class Clangy:
             excerpt = " ".join(known.text.split())[:200]
             conv.host_notes.append(
                 f"[host] {known.author} deleted their message from {known.created:%Y-%m-%d %H:%M} UTC "
-                f'("{excerpt}"). Disregard it.'
+                f'("{excerpt}"). Disregard only that message, the rest of the conversation still stands.'
             )
         self._after_change(conv, known, f"deleted their message from {known.created:%Y-%m-%d %H:%M} UTC")
 

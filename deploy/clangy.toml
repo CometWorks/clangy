@@ -36,7 +36,7 @@ priority = 5
 parallel = 1
 context_window = 184320
 max_tokens = 4096
-thinking = "off"
+thinking = "minimal"
 compat = { thinkingFormat = "qwen-chat-template" }
 prompt_tps = 350.0
 gen_tps = 50.0
@@ -60,7 +60,7 @@ gen_tps = 50.0
 # stall_timeout = 60
 # cooldown = 60
 # # OpenRouter falls back within a request, to at most 3 models
-# extra_body = { models = ["qwen/qwen3.8-27b:free", "nvidia/nemotron-3-super-120b-a12b:free", "google/gemma-4-31b-it:free"], reasoning = { enabled = false } }
+# extra_body = { models = ["qwen/qwen3.8-27b:free", "nvidia/nemotron-3-super-120b-a12b:free", "google/gemma-4-31b-it:free"], reasoning = { effort = "minimal" } }
 
 # Paid OpenRouter models, used only while the others fail or are busy, the cheaper one first. The key needs a credit limit above 0.
 # [[backends]]
@@ -79,7 +79,7 @@ gen_tps = 50.0
 # first_byte_timeout = 60
 # stall_timeout = 60
 # cooldown = 60
-# extra_body = { reasoning = { enabled = false } }
+# extra_body = { reasoning = { effort = "minimal" } }
 
 # A second paid model, more expensive per answer than gpt-6-luna.
 # [[backends]]
@@ -98,7 +98,7 @@ gen_tps = 50.0
 # first_byte_timeout = 60
 # stall_timeout = 60
 # cooldown = 60
-# extra_body = { reasoning = { enabled = false } }
+# extra_body = { reasoning = { effort = "minimal" } }
 
 # Chat channel: a mention starts a thread with Clangy
 [[channels]]
