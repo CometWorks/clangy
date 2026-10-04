@@ -1035,3 +1035,60 @@ async def test_cache_never_outlives_the_retention(bot, config, monkeypatch):
     bot.expire()
     now = datetime.now(timezone.utc)
     assert [round((now - when).total_seconds() / 3600) for when in pruned] == [48, 12]
+
+
+async def test_expired_thread_starts_over_from_discord_on_a_mention(bot, chat, config):
+    await bot.on_message(forum_post(SUPPORT, 1147, "Old question", author="Carol"))
+    await bot.wait_idle()
+    old = time.time() - 41 * 86400
+    os.utime(config.data_dir / "conversations" / "1147" / "state.json", (old, old))
+    chat.channel_history[1147] = [
+        message(1147, "Old question", parent_id=SUPPORT, id=1147, author="Carol"),
+        message(1147, chat.in_channel(1147)[0].current, parent_id=SUPPORT, id=1148, author="Clangy", from_self=True),
+        message(1147, "Back again", parent_id=SUPPORT, id=1149, author="Carol"),
+    ]
+
+    agent = FakeAgent()
+    second = Clangy(config, chat, run_agent=agent)
+    await second.load()
+    await second.on_message(chat.channel_history[1147][-1])
+    await second.wait_idle()
+    assert 1147 not in second.conversations and agent.specs == [], "only a mention brings it back"
+    await second.on_message(message(1147, "@Clangy still broken", parent_id=SUPPORT, id=1150, mentions_bot=True))
+    await second.wait_idle()
+    prompt = agent.prompts[0]
+    assert prompt.index("Carol: Old question") < prompt.index("Carol: Back again") < prompt.index("still broken")
+    assert prompt.index("Carol: Old question") < prompt.index("Clangy (you): Default answer.") < prompt.index("Back")
+    assert text.footer("Clangy") not in prompt
+    assert chat.in_channel(1147)[-1].current.startswith("Default answer.")
+    await second.close()
+
+
+async def test_unknown_thread_keeps_only_clangys_answers(bot, chat):
+    footer = text.footer("Clangy")
+    own = dict(parent_id=QUIET_FORUM, author="Clangy", from_self=True)
+    long_answer = text.answer_parts("A" * 1500 + "\n\n" + "B" * 1500, footer)
+    chat.channel_history[1151] = [
+        message(1151, "v1 answer", **own),
+        message(1151, "Question", parent_id=QUIET_FORUM, author="Carol"),
+        message(1151, text.failed("Clangy"), **own),
+        message(1151, long_answer[0], **own),
+        message(1151, long_answer[1], **own),
+        message(1151, "Thanks", parent_id=QUIET_FORUM, author="Carol"),
+        message(1151, text.progress(0, None, 0, 1), **own),
+        message(1151, "Short answer.", **own),
+        message(1151, footer, **own),
+    ]
+    await bot.on_message(message(1151, "@Clangy again", parent_id=QUIET_FORUM, mentions_bot=True))
+    await bot.wait_idle()
+    prompt = bot.agent.prompts[0]
+    assert "v1 answer" not in prompt and "Sorry" not in prompt and "⏳" not in prompt
+    assert prompt.count(footer) == 0
+    lines = [line for line in prompt.splitlines() if line.startswith(("Carol", "Clangy"))]
+    assert lines == [
+        "Carol: Question",
+        "Clangy (you): " + "A" * 1500,
+        "Clangy (you): " + "B" * 1500,
+        "Carol: Thanks",
+        "Clangy (you): Short answer.",
+    ]

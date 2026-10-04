@@ -9,7 +9,7 @@ import os
 import shutil
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal, Protocol
@@ -72,6 +72,8 @@ class PendingMessage(BaseModel):
     """Earlier chat that came along with a mention as context, not something to answer."""
     reply_to_author: str = ""
     """Author of the message this one replies to."""
+    own: bool = False
+    """Clangy's earlier answer, read back from the thread."""
 
 
 class KnownMessage(BaseModel):
@@ -365,7 +367,7 @@ class Clangy:
         """The chat before a mention, plus the older messages it replies to. A thread is one conversation, so that's
         all of it, read from Discord. A channel's comes from the cache, and Discord fills in what isn't cached yet."""
         if msg.parent_id is not None:
-            earlier = [m for m in await self.chat.history(msg.channel_id, msg.id, None, None) if not m.from_self]
+            earlier = self._own_answers_only(await self.chat.history(msg.channel_id, msg.id, None, None))
         else:
             start = self.context_start(channel, msg.created)
             if start < self._covered_since.get(msg.channel_id, self._live_since):
@@ -374,6 +376,23 @@ class Clangy:
         ids = {m.id for m in earlier} | {msg.id}
         replied = {r.id: r for m in [*earlier, msg] if (r := m.replied_to) and r.id not in ids and not r.from_self}
         return [m for m in sorted([*replied.values(), *earlier], key=lambda m: m.created) if said_something(m)]
+
+    def _own_answers_only(self, messages: list[IncomingMessage]) -> list[IncomingMessage]:
+        """Drops Clangy's own messages except its answers, without their footer. An answer's last part ends with the
+        footer, its other parts come right before it. v1 answers have no footer, so they are dropped too."""
+        footer = text.footer(self.chat.bot_name)
+        kept = []
+        in_answer = False
+        for m in reversed(messages):
+            if not m.from_self:
+                kept.append(m)
+                in_answer = False
+            elif m.text.startswith(text.STATUS_MARKS):
+                in_answer = False
+            elif in_answer or m.text.endswith(footer):
+                kept.append(replace(m, text=m.text.removesuffix(footer).rstrip()))
+                in_answer = True
+        return kept[::-1]
 
     async def _fetch_history(self, channel_id: int, before_id: int | None, limit: int, start: datetime) -> None:
         for message in await self.chat.history(channel_id, before_id, limit, start):
@@ -508,7 +527,13 @@ class Clangy:
             notes.append(f"attachments/{name} ({human_size(attachment.size)})")
         replied = msg.replied_to.author if msg.replied_to else ""
         return PendingMessage(
-            id=msg.id, author=msg.author, text=msg.text, created=msg.created, attachments=notes, reply_to_author=replied
+            id=msg.id,
+            author=msg.author,
+            text=msg.text,
+            created=msg.created,
+            attachments=notes,
+            reply_to_author=replied,
+            own=msg.from_self,
         )
 
     def _record(self, conv: Conversation, author: str, when: datetime, text: str, title: str = "") -> None:
@@ -760,8 +785,8 @@ class Clangy:
     def _message_lines(messages: list[PendingMessage]) -> list[str]:
         lines = []
         for m in messages:
-            reply = f" (reply to {m.reply_to_author})" if m.reply_to_author else ""
-            lines.append(f"{m.author}{reply}: {m.text}")
+            note = " (you)" if m.own else f" (reply to {m.reply_to_author})" if m.reply_to_author else ""
+            lines.append(f"{m.author}{note}: {m.text}")
             lines += [f"[host] Attachment from {m.author}: {a}" for a in m.attachments]
         return lines
 

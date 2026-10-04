@@ -52,3 +52,18 @@ def test_progress_only_details_problems():
     assert text.progress(eta=1000, deadline=2000, ahead=0, now=1100) == (
         "⏳ Taking longer than expected, deadline <t:2000:R>."
     )
+
+
+def test_status_messages_start_with_a_status_mark():
+    """Reading a thread back, Clangy tells its status messages from its answers by these marks."""
+    messages = [
+        text.progress(0, None, 0, 1),
+        text.progress(0, 5, 0, 1),
+        text.progress(10, None, 2, 1),
+        text.progress(10, None, 0, 1),
+        text.timed_out("Clangy"),
+        text.failed("Clangy"),
+        text.backend_lost(1, 3),
+        text.backend_gave_up("Clangy"),
+    ]
+    assert all(m.startswith(text.STATUS_MARKS) for m in messages)
