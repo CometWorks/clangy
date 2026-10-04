@@ -136,7 +136,7 @@ A restart during a run turns that run's progress message into a failure note. Th
 
 ## Game version and knowledge
 
-A channel can fix the game (`game = "se1"`). Otherwise the agent asks when it isn't clear and calls `set_game`. The host records it, adds a `[host]` note, and immediately runs pi again in the same session with `knowledge/` linked to the matching tree. The text of the run that called `set_game` is discarded.
+A channel can fix the game (`game = "se1"`). Otherwise the agent settles it from the conversation and calls `set_game`: a game a user names, SE2 when an executable, path or log is SE2's, else SE1 by default, which it mentions in a few words so users can correct it. It asks only when the hints contradict each other, and calls `set_game` again if a later message shows the other game. The host records it, adds a `[host]` note, and immediately runs pi again in the same session with `knowledge/` linked to the matching tree. The text of the run that called `set_game` is discarded.
 
 When the game is known, the host note lists the skills under `knowledge/`: every `SKILL.md` up to two folders deep in the game's knowledge and in the mounts linked there, with the name and description from its frontmatter and its path, like pi's own skill list. The model is told to read the matching `SKILL.md` and follow it. pi's own skill loading isn't used, because Clangy replaces pi's system prompt to keep it cache-stable, and the list depends on the game.
 
