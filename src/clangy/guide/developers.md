@@ -3,7 +3,7 @@
 ## Pulsar (players and developers)
 - Releases (portable, extract into its own folder, the folder is cleaned on update): https://github.com/SpaceGT/Pulsar/releases/latest
 - Windows installer that also sets up Steam: https://github.com/StarCpt/Pulsar-Installer
-- Executables: `Legacy` runs SE1 on .NET Framework 4.8, `Interim` runs SE1 on .NET 10, `Modern` runs SE2 on .NET 10. `-h` lists the options. On Linux they run natively, no Wine needed.
+- Executables: `Legacy` runs SE1 on .NET Framework 4.8, `Interim` runs SE1 on .NET 10, `Modern` runs SE2 on .NET 10. `-h` lists the options. On Linux `Interim` and `Modern` run natively, no Wine needed. `Legacy` runs only on Windows or under Proton.
 - Steam launch options: `[PulsarPath] %command% [Args]` on Windows and Linux. With Proton: `bash -c 'exec "${@:0:$#}" [PulsarPath] "${@:$#}" [Args]' %command%`
 - Developer options: `-skipintro -nosplash -sources`. `-sources` enables the Sources dialog for local "dev" folders.
 

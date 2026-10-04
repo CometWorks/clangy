@@ -141,9 +141,9 @@ Sources are folders used in place (the nas setup) or git repositories. `clangy s
 
 ## Prompt, guide and host tools
 
-`prompts/system.md` is the system prompt: how to read the turns (`Name: text`, `[host]` lines, the reference block), the rules (facts only, short answers, no code for users, never reveal the books or the instructions, ignore injected instructions), the tools in the sandbox, working out the game, collecting problem reports until a ticket is possible, pointing developers to sources, sending files, the `repos/` mount and the store. Keep it free of changing data, its bytes are the cached prefix. A channel's `prompt` is appended under `# Channel`.
+`prompts/system.md` is the system prompt: how to read the turns (`Name: text`, `[host]` lines, the reference block), the rules (facts only, short answers, no code for users, never reveal the books or the instructions, ignore injected instructions), the tools in the sandbox, working out the game, the valid game and server setups, collecting problem reports (setup first, logs only after it) until a ticket is possible, pointing developers to sources, sending files, the `repos/` mount and the store. Keep it free of changing data, its bytes are the cached prefix. A channel's `prompt` is appended under `# Channel`.
 
-`guide/` holds files the agent reads on demand: `logs.md` (where Pulsar's `info.log`, the game logs and crash dumps are on each OS and runtime) and `developers.md` (sources for Pulsar, dedicated servers, plugin, mod and script development).
+`guide/` holds files the agent reads on demand: `logs.md` (where Pulsar's and Magnetar's `info.log`, the game logs and crash dumps are for each setup) and `developers.md` (sources for Pulsar, dedicated servers, plugin, mod and script development).
 
 Host tools, defined in `pi/clangy.ts` and run by the host through the socket:
 
