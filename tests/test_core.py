@@ -860,11 +860,12 @@ async def test_knowledge_note_lists_the_skills(bot, config, tmp_path):
     config.knowledge["se1"] = [
         KnowledgeSource(path=skills, link="knowledge/skills"),
         KnowledgeSource(path=books, link="knowledge/books"),
-        KnowledgeSource(path=humanizer, link="knowledge/humanizer"),
     ]
+    config.mounts = [KnowledgeSource(path=humanizer, link="knowledge/humanizer")]
     bot.agent.script = [tool("set_game", {"game": "se1"}, answer("")), answer("SE1 answer.")]
     await bot.on_message(forum_post(SUPPORT, 1080, "Do we have foxes in SE1?"))
     await bot.wait_idle()
+    assert bot.agent.specs[0].read_only.count(humanizer) == 1, "a mount is there before the game is known"
     second = bot.agent.prompts[1]
     assert second.startswith("[host] This conversation is about SE1. Its knowledge is under knowledge/.")
     assert "- se-dev: Overview (knowledge/skills/se-dev/SKILL.md)" in second
