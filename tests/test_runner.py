@@ -4,7 +4,7 @@ import textwrap
 from pathlib import Path
 
 from clangy.config import BackendConfig, SandboxConfig
-from clangy.runner import RunPaths, RunSpec, build_command, final_result, run_pi, write_pi_config
+from clangy.runner import RunPaths, RunSpec, build_command, final_result, replace_answer, run_pi, write_pi_config
 
 BACKEND = BackendConfig(name="b", url="http://x/v1", model="qwen", thinking="low", compat={"thinkingFormat": "qwen"})
 
@@ -183,3 +183,25 @@ def test_openrouter_thinking_becomes_its_reasoning_effort(tmp_path):
 def test_reasoning_leaked_into_the_answer_is_cut():
     event = {"messages": [{"role": "assistant", "content": [{"type": "text", "text": "Got it.\n</think>\n\nGot it."}]}]}
     assert final_result(event).answer == "Got it."
+
+
+def test_replace_answer_keeps_the_rest_of_the_session(tmp_path):
+    session = tmp_path / "session.jsonl"
+    entries = [
+        {"type": "session", "version": 3},
+        {"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": "Earlier."}]}},
+        {"type": "message", "message": {"role": "user", "content": [{"type": "text", "text": "Again?"}]}},
+        {
+            "type": "message",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "thinking", "thinking": "hm"}, {"type": "text", "text": "Earlier. Más."}],
+            },
+        },
+    ]
+    session.write_text("".join(json.dumps(e) + "\n" for e in entries))
+    replace_answer(session, "Más.")
+    lines = [json.loads(line) for line in session.read_text().splitlines()]
+    assert lines[:3] == entries[:3]
+    assert lines[3]["message"]["content"] == [{"type": "thinking", "thinking": "hm"}, {"type": "text", "text": "Más."}]
+    assert "Más" in session.read_text(), "kept as UTF-8 like pi writes it"

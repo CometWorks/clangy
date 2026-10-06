@@ -70,6 +70,7 @@ class FakeAgent:
         self.script: list[Step] = []
         self.specs: list[RunSpec] = []
         self.tool_results: list = []
+        self.linked: list[bool] = []
 
     @property
     def prompts(self) -> list[str]:
@@ -244,6 +245,30 @@ async def test_long_answers_are_split(bot, chat):
     assert parts[0].startswith("Paragraph 0.") and parts[1].endswith(text.footer("Clangy"))
 
 
+def pi_answer(reply: str) -> Step:
+    """Like answer, but writes the session entry the way pi does."""
+
+    async def step(agent: "FakeAgent", spec: RunSpec) -> RunResult:
+        entry = {"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": reply}]}}
+        with open(spec.paths.session, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+        return RunResult(answer=reply)
+
+    return step
+
+
+async def test_copied_turns_are_cut_from_the_answer_and_the_session(bot, chat):
+    question = "Which executable do you start, Interim.exe or Legacy.exe?"
+    bot.agent.script = [answer(question), pi_answer(f"{question}  \nAlice: Interim  \nSend me info.log, please.")]
+    await bot.on_message(forum_post(SUPPORT, 1013, "SE1 crashes"))
+    await bot.wait_idle()
+    await bot.on_message(message(1013, "Interim", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
+    assert chat.in_channel(1013)[-1].current.startswith("Send me info.log, please.")
+    last = json.loads(bot.agent.specs[-1].paths.session.read_text().splitlines()[-1])
+    assert last["message"]["content"] == [{"type": "text", "text": "Send me info.log, please."}]
+
+
 async def test_timeout_keeps_messages_and_session(bot, chat):
     await bot.on_message(forum_post(SUPPORT, 1008, "Hello"))
     await bot.wait_idle()
@@ -307,25 +332,49 @@ async def test_monitor_skips_unhealthy_backend(bot, backend):
     assert bot.conversations[1011].retries == 0
 
 
-async def test_set_game_mounts_knowledge_and_continues(bot, chat, config):
+def linked(name: str, then: Step) -> Step:
+    """Checks that the work folder link exists when the next step starts, like a read by the model would."""
+
+    async def step(agent: "FakeAgent", spec: RunSpec) -> RunResult:
+        agent.linked.append((spec.paths.work / name).is_dir())
+        return await then(agent, spec)
+
+    return step
+
+
+async def test_set_game_links_knowledge_within_the_run(bot, chat, config):
     knowledge = config.data_dir / "knowledge" / "releases" / "r1" / "se2" / "knowledge" / "skills"
     knowledge.mkdir(parents=True)
     (config.data_dir / "knowledge" / "current").symlink_to("releases/r1")
     config.knowledge["se2"] = [KnowledgeSource(url="https://example.invalid/skills2.git", link="knowledge/skills")]
-    bot.agent.script = [tool("set_game", {"game": "se2"}, answer("")), answer("SE2 answer")]
+    bot.agent.script = [
+        linked("knowledge/skills", tool("set_game", {"game": "se2"}, linked("knowledge/skills", answer("SE2 answer"))))
+    ]
     await bot.on_message(forum_post(SUPPORT, 1012, "SE2 crashes on start"))
     await bot.wait_idle()
-    first, second = bot.agent.specs
-    assert knowledge.resolve() not in first.read_only
-    assert second.prompt.startswith("[host] This conversation is about SE2. Its knowledge is under knowledge/.")
-    assert (second.paths.work / "knowledge" / "skills").is_dir()
-    assert knowledge.resolve() in second.read_only
+    (spec,) = bot.agent.specs
+    assert knowledge.resolve() in spec.read_only, "readable before the game is known"
+    assert bot.agent.linked == [False, True]
+    status, reply = bot.agent.tool_results[0]
+    assert status == 200 and reply["text"].startswith("Recorded. This conversation is about SE2. Its knowledge is")
     conv = bot.conversations[1012]
     assert conv.game == "se2" and conv.host_notes == [] and conv.pending == []
     assert chat.in_channel(1012)[0].current.startswith("SE2 answer")
 
 
-async def test_knowledge_folders_in_place_only_for_the_game(bot, config, tmp_path):
+async def test_failed_run_after_set_game_tells_the_next_run(bot, chat):
+    bot.agent.script = [tool("set_game", {"game": "se1"}, timeout), answer("SE1 answer")]
+    await bot.on_message(forum_post(SUPPORT, 1014, "Crash"))
+    await bot.wait_idle()
+    conv = bot.conversations[1014]
+    assert conv.game == "se1" and conv.host_notes[-1].startswith("[host] This conversation is about SE1.")
+    await bot.on_message(message(1014, "@Clangy again", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
+    assert "[host] This conversation is about SE1." in bot.agent.prompts[-1]
+    assert conv.host_notes == []
+
+
+async def test_knowledge_folders_in_place_for_the_game(bot, config, tmp_path):
     folders = {name: tmp_path / "srv" / name for name in ("skills", "skills2", "se-dev", "books")}
     for folder in folders.values():
         folder.mkdir(parents=True)
@@ -341,16 +390,16 @@ async def test_knowledge_folders_in_place_only_for_the_game(bot, config, tmp_pat
     work = spec.paths.work
     assert (work / "knowledge" / "skills").resolve() == folders["skills"]
     assert (work / ".se-dev").resolve() == folders["se-dev"]
-    assert {folders["skills"], folders["books"], folders["se-dev"]} <= set(spec.read_only)
-    assert folders["skills2"] not in spec.read_only
+    assert set(folders.values()) <= set(spec.read_only), "both games, so set_game needs no new sandbox"
+    assert not (work / "knowledge" / "skills2").exists()
 
     # Switching the game swaps the links and drops the other game's extras
-    bot.agent.script = [tool("set_game", {"game": "se2"}, answer("")), answer("SE2 then.")]
+    bot.agent.script = [tool("set_game", {"game": "se2"}, answer("SE2 then."))]
     await bot.on_message(message(1024, "@Clangy actually SE2", parent_id=SE1_FORUM, mentions_bot=True))
     await bot.wait_idle()
     assert (work / "knowledge" / "skills").resolve() == folders["skills2"]
     assert not (work / ".se-dev").exists() and not (work / "knowledge" / "books").exists()
-    assert folders["se-dev"] not in bot.agent.specs[-1].read_only
+    assert len(bot.agent.specs) == 2
 
 
 async def test_channel_game_and_prompt(bot, config):
@@ -416,7 +465,7 @@ async def test_ticket_tools_link_thread_and_keep_files(bot, chat, config):
     for prompt in ("@Clangy same", "@Clangy bad", "@Clangy leak"):
         await bot.on_message(message(1015, prompt, parent_id=SE1_FORUM, mentions_bot=True))
         await bot.wait_idle()
-    assert bot.agent.tool_results[1] == (200, {"text": "Added the report to T-0001.", "stop": False})
+    assert bot.agent.tool_results[1] == (200, {"text": "Added the report to T-0001."})
     assert bot.agent.tool_results[2] == (400, {"error": "title is empty"})
     assert bot.agent.tool_results[3] == (
         400,
@@ -865,10 +914,10 @@ async def test_mounts_are_in_every_conversation(bot, config, tmp_path):
     spec = bot.agent.specs[0]
     assert (spec.paths.work / "repos" / "CometWorks" / "magnetar").is_dir()
     assert repos in spec.read_only
-    bot.agent.script = [tool("set_game", {"game": "se1"}, answer("")), answer("SE1 then.")]
+    bot.agent.script = [tool("set_game", {"game": "se1"}, answer("SE1 then."))]
     await bot.on_message(message(1070, "@Clangy it's SE1", parent_id=QUIET_FORUM, mentions_bot=True))
     await bot.wait_idle()
-    assert repos in bot.agent.specs[-1].read_only, "mounts stay when the game is set"
+    assert (spec.paths.work / "repos").is_dir(), "mounts stay when the game is set"
 
 
 async def test_knowledge_note_lists_the_skills(bot, config, tmp_path):
@@ -891,17 +940,16 @@ async def test_knowledge_note_lists_the_skills(bot, config, tmp_path):
         KnowledgeSource(path=books, link="knowledge/books"),
     ]
     config.mounts = [KnowledgeSource(path=humanizer, link="knowledge/humanizer")]
-    bot.agent.script = [tool("set_game", {"game": "se1"}, answer("")), answer("SE1 answer.")]
+    bot.agent.script = [tool("set_game", {"game": "se1"}, answer("SE1 answer."))]
     await bot.on_message(forum_post(SUPPORT, 1080, "Do we have foxes in SE1?"))
     await bot.wait_idle()
     assert bot.agent.specs[0].read_only.count(humanizer) == 1, "a mount is there before the game is known"
-    second = bot.agent.prompts[1]
-    assert second.startswith("[host] This conversation is about SE1. Its knowledge is under knowledge/.")
+    second = bot.agent.tool_results[0][1]["text"]
+    assert second.startswith("Recorded. This conversation is about SE1. Its knowledge is under knowledge/.")
     assert "- se-dev: Overview (knowledge/skills/se-dev/SKILL.md)" in second
     assert "- se-dev-game-code: Decompiled game code (knowledge/skills/se-dev-game-code/SKILL.md)" in second
     assert "- se-dev-game-book: Handbook (knowledge/books/se-dev-game-book/SKILL.md)" in second
     assert "- humanizer: Rewrite AI-sounding text. Use for prose. (knowledge/humanizer/SKILL.md)" in second
-    assert second.endswith("Now write your answer to the user's messages; don't refer to earlier drafts.")
     assert bot.conversations[1080].host_notes == []
 
 

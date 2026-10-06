@@ -13,14 +13,14 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 | `core.py` | Channel rules, conversations, queued messages, one run per conversation, progress messages, retries, host tools, persistence. |
 | `backend.py` | Per-backend run queue (`parallel` runs at once), runs ahead, measured prompt and generation speeds, ETA, health checks and cooldowns, llama.cpp slot pinning and save/restore. |
 | `proxy.py` | Per-run HTTP server on a unix socket inside the work folder: forwards chat completions to the run's backend, detects backend failures, and serves the host tools. |
-| `runner.py` | Writes pi's config, builds the firejail command line, runs pi with a deadline and reads its JSON event stream. |
+| `runner.py` | Writes pi's config, builds the firejail command line, runs pi with a deadline, reads its JSON event stream, and replaces the answer in pi's session when the host shortened it. |
 | `store.py` | Tickets, notes and plans in the workspace, and the records of `record` channels. |
 | `knowledge.py` | The daily sync of knowledge kept in git repositories. |
 | `cache.py` | The local message cache (`messages.sqlite`). |
 | `timings.py` | `clangy timings`, the summary of `metrics.jsonl`. |
 | `check.py` | `clangy check` and the sandbox probe that `clangy run` requires to pass. |
 | `files.py` | Files the agent sends: validation, at-most-once sending, ZIP grouping. |
-| `text.py` | Discord texts: answer splitting, footer, progress and error messages. |
+| `text.py` | Discord texts: answer splitting, cutting copied turns from answers, footer, progress and error messages. |
 | `pi/clangy.ts` | pi extension loaded in the sandbox: replaces the system prompt, bridges the host and proxy sockets, defines the host tools. |
 | `sandbox-bin/` | `rg`, `fd` and `find` wrappers that follow links. |
 | `workspace/` | `pyproject.toml` and `uv.lock` of the sandboxes' shared Python environment, see Sandbox. |
@@ -33,7 +33,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 2. The worker picks the backend (see Backends) and waits for a slot on it. The progress message shows the ETA (see Progress and ETA).
 3. The host snapshots the pi session file, refreshes the work folder links (`attachments`, `store/*`, `guide`, the game's knowledge), writes pi's `models.json` and `settings.json`, and opens the host socket.
 4. pi runs in firejail with `--mode json --print --session <file>`. The prompt is a `[host]` timestamp line, then every queued message as `Name: text` plus attachment notes. In forums, a note gives the post's title when the model hasn't seen it yet or it changed, since the title is often the question itself.
-5. On success the queued messages are dropped, the answer replaces the progress message, and parts over 2000 characters go into follow-up messages. Every answer ends with the fixed mention reminder.
+5. On success the queued messages are dropped, the answer replaces the progress message, and parts over 2000 characters go into follow-up messages. Every answer ends with the fixed mention reminder. Some models write the conversation out again before their answer. When an answer starts with one of Clangy's earlier answers (40 characters or more), the host cuts that and any further copied answers and `Name: text` lines that follow, and puts the shortened answer into the pi session too, since later answers would copy the copy. An answer that is only a copy is posted as it is.
 6. On a timeout, backend failure or other failure the session file is restored from the snapshot, so partial output never reaches the next run, and the queued messages stay queued.
 
 ### When Clangy responds
@@ -136,15 +136,15 @@ A restart during a run turns that run's progress message into a failure note. Th
 
 ## Game version and knowledge
 
-A channel can fix the game (`game = "se1"`). Otherwise the agent settles it from the conversation and calls `set_game`: a game a user names, SE2 when an executable, path or log is SE2's, else SE1 by default, which it mentions in a few words so users can correct it. It asks only when the hints contradict each other, and calls `set_game` again if a later message shows the other game. The host records it, adds a `[host]` note, and immediately runs pi again in the same session with `knowledge/` linked to the matching tree. The text of the run that called `set_game` is discarded.
+A channel can fix the game (`game = "se1"`). Otherwise the agent settles it from the conversation and calls `set_game`: a game a user names, SE2 when an executable, path or log is SE2's, else SE1 by default, which it mentions in a few words so users can correct it. It asks only when the hints contradict each other, and calls `set_game` again if a later message shows the other game. The host records it and links `knowledge/` to the matching tree, and the tool's reply tells the model the game and lists its skills, so the run goes on with the knowledge in place. If the run fails, its session is restored, so the same text goes into the next run's prompt as a `[host]` note.
 
-When the game is known, the host note lists the skills under `knowledge/`: every `SKILL.md` up to two folders deep in the game's knowledge and in the mounts linked there, with the name and description from its frontmatter and its path, like pi's own skill list. The model is told to read the matching `SKILL.md` and follow it. pi's own skill loading isn't used, because Clangy replaces pi's system prompt to keep it cache-stable, and the list depends on the game.
+When the game is known, the `set_game` reply (or the `[host]` note of a channel's fixed game) lists the skills under `knowledge/`: every `SKILL.md` up to two folders deep in the game's knowledge and in the mounts linked there, with the name and description from its frontmatter and its path, like pi's own skill list. The model is told to read the matching `SKILL.md` and follow it. pi's own skill loading isn't used, because Clangy replaces pi's system prompt to keep it cache-stable, and the list depends on the game.
 
 A mount is linked from the first run, before the game is known. The nas mounts the humanizer skill as `knowledge/humanizer`, and the system prompt has the model read it before any answer longer than one sentence.
 
 The knowledge is linked into the work folder, and ripgrep and fd don't follow links by default, so `sandbox-bin/rg` and `sandbox-bin/fd`, first on the sandbox's `PATH`, add `--follow` for pi's grep and find. `sandbox-bin/find` adds `-H` for the shell's find, which otherwise doesn't descend into a link given as the start path, such as a plugin skill's `Data/Sources/<repo>`.
 
-Each configured knowledge source of the game becomes a link in the work folder: `knowledge/skills`, `knowledge/books`, and prepared data the skills expect in the home folder. The links are resolved when each run starts and the other game's links are removed. The firejail whitelist contains only that game's targets, plus the mounts. Data that must be readable whatever the game, like the skills' data when every conversation can reach both games' skills through `repos/`, goes into `[[mounts]]` instead.
+Each configured knowledge source of the game becomes a link in the work folder: `knowledge/skills`, `knowledge/books`, and prepared data the skills expect in the home folder. The links are resolved when each run starts and the other game's links are removed. The firejail whitelist holds both games' targets, resolved at the same time, plus the mounts: firejail fixes it when pi starts, so `set_game` could not add a tree later. The links decide which game the model works in. The other game's tree being readable changes nothing for secrecy, both games' books are kept from users the same way (see The books). Data that must be linked whatever the game, like the skills' data when every conversation can reach both games' skills through `repos/`, goes into `[[mounts]]` instead.
 
 Sources are folders used in place (the nas setup) or git repositories. `clangy sync-knowledge` (daily) keeps mirrors of the repositories. When any HEAD changed, it exports all of them into a new `releases/<timestamp>` folder and swaps the `current` symlink with an atomic rename, keeping the current and the previous release. Since links resolve per run, a run keeps one snapshot even if the sync swaps trees meanwhile.
 
@@ -158,7 +158,7 @@ Host tools, defined in `pi/clangy.ts` and run by the host through the socket:
 
 | Tool | Does |
 |---|---|
-| `set_game` | Records SE1 or SE2 and ends the run; the host runs pi again with that game's knowledge (see Game version and knowledge). |
+| `set_game` | Records SE1 or SE2 and links that game's knowledge into the work folder; the reply lists its skills (see Game version and knowledge). |
 | `attach_files` | Stages files for the answer (see Files). |
 | `ticket_create`, `ticket_add_report` | Files a problem report, or adds a repeated report to an open ticket. |
 | `note_create`, `plan_create` | Shared findings, and plans from ideas or requests. |

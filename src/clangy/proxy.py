@@ -24,14 +24,7 @@ from clangy.backend import Backend
 log = logging.getLogger(__name__)
 
 
-@dataclass
-class ToolReply:
-    text: str
-    stop: bool = False
-    """Ends the agent's run after this tool call, e.g. to start it again with new mounts."""
-
-
-ToolHandler = Callable[[str, dict], Awaitable[ToolReply | str]]
+ToolHandler = Callable[[str, dict], Awaitable[str]]
 FAILED_STATUSES = {401, 402, 403, 404, 408, 429}
 """Besides 5xx: the backend can't serve now (key, credit or model unavailable, timeout, rate limit), unlike a
 request it rejects (400). Another backend may answer."""
@@ -185,9 +178,7 @@ class HostServer:
             reply = await self.run.tools(name, params)
         except (ToolError, json.JSONDecodeError) as e:
             return web.json_response({"error": str(e)}, status=400)
-        if isinstance(reply, str):
-            reply = ToolReply(reply)
-        return web.json_response({"text": reply.text, "stop": reply.stop})
+        return web.json_response({"text": reply})
 
     async def _chat(self, request: web.Request) -> web.StreamResponse:
         run = self.run

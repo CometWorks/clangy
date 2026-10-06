@@ -87,7 +87,7 @@ async def test_pi_commands_reach_the_proxy(tmp_path, backend, chat, squid):
     assert "200 Connection established" in tool_result
 
 
-async def test_set_game_ends_the_run_and_starts_it_again(tmp_path, backend, chat):
+async def test_set_game_lists_the_skills_and_the_run_goes_on(tmp_path, backend, chat):
     assert PI is not None
     skills = tmp_path / "skills"
     skills.mkdir()
@@ -104,8 +104,9 @@ async def test_set_game_ends_the_run_and_starts_it_again(tmp_path, backend, chat
     await bot.on_message(forum_post(SUPPORT, 2002, "My SE1 game crashes"))
     await bot.wait_idle()
     await bot.close()
-    assert len(backend.requests) == 2, "no model call between set_game and the new run"
-    assert "This conversation is about SE1" in json.dumps(backend.requests[1]["messages"][-1])
+    assert len(backend.requests) == 2, "one run: the set_game call, then the answer"
+    tool_result = backend.requests[1]["messages"][-1]
+    assert tool_result["role"] == "tool" and "This conversation is about SE1" in json.dumps(tool_result)
     assert chat.in_channel(2002)[0].current.startswith("SE1 answer.")
 
 

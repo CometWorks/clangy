@@ -183,6 +183,21 @@ def final_result(event: dict) -> RunResult:
     return RunResult(answer=text) if text else RunResult(error="empty answer")
 
 
+def replace_answer(session: Path, answer: str) -> None:
+    """Puts the answer as posted into the pi session in place of the model's last text, so later turns build on it."""
+    lines = session.read_text().splitlines()
+    for i in reversed(range(len(lines))):
+        entry = json.loads(lines[i])
+        message = entry.get("message", {})
+        if entry.get("type") != "message" or message.get("role") != "assistant":
+            continue
+        content = [c for c in message["content"] if c.get("type") != "text"]
+        message["content"] = content + [{"type": "text", "text": answer}]
+        lines[i] = json.dumps(entry, ensure_ascii=False, separators=(",", ":"))
+        session.write_text("\n".join(lines) + "\n")
+        return
+
+
 async def run_pi(spec: RunSpec, port: int, deadline: float, on_turn: Callable[[], None]) -> RunResult:
     """Runs pi until it exits or the deadline (seconds from now) passes; on_turn is called on each model turn."""
     command = build_command(spec, port)
