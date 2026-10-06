@@ -1,8 +1,12 @@
-"""Discord message texts: answer splitting, footer, progress and error indications."""
+"""Discord message texts: answer splitting and cleanup, footer, progress and error indications."""
+
+import re
 
 LIMIT = 2000
 STATUS_MARKS = ("⏳", "❌", "⚠️")
 """Progress and error messages start with one of these."""
+MIN_ECHO = 40
+"""Shorter earlier answers, like "Yes.", don't count as a copy at the start of an answer."""
 
 
 def _is_fence(line: str) -> bool:
@@ -63,6 +67,28 @@ def split_message(text: str, limit: int = LIMIT) -> list[str]:
     if current:
         parts.append(current)
     return parts
+
+
+def _cut(text: str, starts: list[str]) -> str | None:
+    """text without the longest of starts it begins with, ignoring whitespace; None if it begins with none of them."""
+    ends = []
+    for start in starts:
+        if words := start.split():
+            if match := re.match(r"\s*" + r"\s+".join(map(re.escape, words)) + r"(?=\s|$)", text):
+                ends.append(match.end())
+    return text[max(ends) :] if ends else None
+
+
+def drop_echo(answer: str, answers: list[str], lines: list[str]) -> str:
+    """Cuts a copy of the conversation from the start of the answer: one of Clangy's earlier answers, then any further
+    answers and message lines (`Name: text`). Some models write the turns out again before their answer. An answer
+    that is nothing but a copy stays, it may be a repeat someone asked for."""
+    rest = _cut(answer, [a for a in answers if len(a) >= MIN_ECHO])
+    if rest is None:
+        return answer
+    while (shorter := _cut(rest, answers + lines)) is not None:
+        rest = shorter
+    return rest.strip() or answer
 
 
 def answer_parts(answer: str, footer: str) -> list[str]:

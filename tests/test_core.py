@@ -244,6 +244,30 @@ async def test_long_answers_are_split(bot, chat):
     assert parts[0].startswith("Paragraph 0.") and parts[1].endswith(text.footer("Clangy"))
 
 
+def pi_answer(reply: str) -> Step:
+    """Like answer, but writes the session entry the way pi does."""
+
+    async def step(agent: "FakeAgent", spec: RunSpec) -> RunResult:
+        entry = {"type": "message", "message": {"role": "assistant", "content": [{"type": "text", "text": reply}]}}
+        with open(spec.paths.session, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+        return RunResult(answer=reply)
+
+    return step
+
+
+async def test_copied_turns_are_cut_from_the_answer_and_the_session(bot, chat):
+    question = "Which executable do you start, Interim.exe or Legacy.exe?"
+    bot.agent.script = [answer(question), pi_answer(f"{question}  \nAlice: Interim  \nSend me info.log, please.")]
+    await bot.on_message(forum_post(SUPPORT, 1013, "SE1 crashes"))
+    await bot.wait_idle()
+    await bot.on_message(message(1013, "Interim", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
+    assert chat.in_channel(1013)[-1].current.startswith("Send me info.log, please.")
+    last = json.loads(bot.agent.specs[-1].paths.session.read_text().splitlines()[-1])
+    assert last["message"]["content"] == [{"type": "text", "text": "Send me info.log, please."}]
+
+
 async def test_timeout_keeps_messages_and_session(bot, chat):
     await bot.on_message(forum_post(SUPPORT, 1008, "Hello"))
     await bot.wait_idle()

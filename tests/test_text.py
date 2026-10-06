@@ -67,3 +67,24 @@ def test_status_messages_start_with_a_status_mark():
         text.backend_gave_up("Clangy"),
     ]
     assert all(m.startswith(text.STATUS_MARKS) for m in messages)
+
+
+QUESTION = "What OS are you using (Windows or Linux)? And are you running Interim.exe or Legacy.exe?"
+LOGS = "Please send Pulsar's info.log and the newest SpaceEngineers_*.log."
+
+
+def test_copied_turns_are_cut_from_the_start():
+    # The model wrote its earlier question and the reply out again, with Markdown line breaks
+    echoed = f"{QUESTION}  \nSpace: Windows Interim  \n{LOGS}"
+    assert text.drop_echo(echoed, [QUESTION], ["Space: Windows Interim"]) == LOGS
+    # The next answer copied that whole answer again
+    again = f"{QUESTION}  \nSpace: Windows Interim  \n\n{LOGS}  \n\nI looked at both mods."
+    assert text.drop_echo(again, [QUESTION, LOGS], ["Space: Windows Interim"]) == "I looked at both mods."
+
+
+def test_answers_that_only_quote_stay():
+    lines = ["Space: Windows Interim"]
+    assert text.drop_echo(f"Space: Windows Interim\n{LOGS}", [QUESTION], lines).startswith("Space:")
+    assert text.drop_echo(QUESTION, [QUESTION], lines) == QUESTION, "a repeat someone asked for"
+    assert text.drop_echo("Yes. And Legacy.exe too.", ["Yes."], lines) == "Yes. And Legacy.exe too."
+    assert text.drop_echo(f"{QUESTION}s and more", [QUESTION], lines) == f"{QUESTION}s and more"

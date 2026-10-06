@@ -24,7 +24,7 @@ from clangy.config import ChannelConfig, Config, Game, SandboxConfig
 from clangy.files import FileError, Outbox, safe_filename
 from clangy.messages import Attachment, IncomingMessage
 from clangy.proxy import HostServer, ProxyRun, RunStats, TcpRelay, ToolError, ToolReply
-from clangy.runner import PACKAGE_DIR, RunPaths, RunResult, RunSpec, free_port, run_pi, write_pi_config
+from clangy.runner import PACKAGE_DIR, RunPaths, RunResult, RunSpec, free_port, replace_answer, run_pi, write_pi_config
 from clangy.store import KeptFile, Store, StoreError
 
 log = logging.getLogger(__name__)
@@ -747,7 +747,7 @@ class Clangy:
             attachments = outbox.commit(self.files_dir(conv.thread_id) / "sent" / f"{conv.runs:04d}")
             conv.sent_files = sorted(outbox.sent)
             self.save(conv)
-            await self._post_answer(conv, self._guard(result.answer), attachments)
+            await self._post_answer(conv, self._guard(self._drop_echo(conv, result.answer)), attachments)
             return
         shutil.rmtree(outbox.staging, ignore_errors=True)
         self._restore_session(conv)
@@ -1040,6 +1040,21 @@ class Clangy:
         return ToolReply("Recorded. The knowledge is being mounted.", stop=True)
 
     # Output
+
+    def _drop_echo(self, conv: Conversation, answer: str) -> str:
+        """The answer without a copy of the conversation at its start, which the pi session then holds instead."""
+        known = conv.known.values()
+        answers = [m.text for m in known if m.own]
+        lines = [f"{m.author}: {m.text}" for m in known if not m.own]
+        kept = text.drop_echo(answer, answers, lines)
+        if kept != answer:
+            log.warning(
+                "Conversation %s: cut %d characters copied from earlier messages",
+                conv.thread_id,
+                len(answer) - len(kept),
+            )
+            replace_answer(RunPaths(self._work_dir(conv)).session, kept)
+        return kept
 
     def _guard(self, answer: str) -> str:
         lowered = answer.lower()

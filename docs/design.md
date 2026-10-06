@@ -13,14 +13,14 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 | `core.py` | Channel rules, conversations, queued messages, one run per conversation, progress messages, retries, host tools, persistence. |
 | `backend.py` | Per-backend run queue (`parallel` runs at once), runs ahead, measured prompt and generation speeds, ETA, health checks and cooldowns, llama.cpp slot pinning and save/restore. |
 | `proxy.py` | Per-run HTTP server on a unix socket inside the work folder: forwards chat completions to the run's backend, detects backend failures, and serves the host tools. |
-| `runner.py` | Writes pi's config, builds the firejail command line, runs pi with a deadline and reads its JSON event stream. |
+| `runner.py` | Writes pi's config, builds the firejail command line, runs pi with a deadline, reads its JSON event stream, and replaces the answer in pi's session when the host shortened it. |
 | `store.py` | Tickets, notes and plans in the workspace, and the records of `record` channels. |
 | `knowledge.py` | The daily sync of knowledge kept in git repositories. |
 | `cache.py` | The local message cache (`messages.sqlite`). |
 | `timings.py` | `clangy timings`, the summary of `metrics.jsonl`. |
 | `check.py` | `clangy check` and the sandbox probe that `clangy run` requires to pass. |
 | `files.py` | Files the agent sends: validation, at-most-once sending, ZIP grouping. |
-| `text.py` | Discord texts: answer splitting, footer, progress and error messages. |
+| `text.py` | Discord texts: answer splitting, cutting copied turns from answers, footer, progress and error messages. |
 | `pi/clangy.ts` | pi extension loaded in the sandbox: replaces the system prompt, bridges the host and proxy sockets, defines the host tools. |
 | `sandbox-bin/` | `rg`, `fd` and `find` wrappers that follow links. |
 | `workspace/` | `pyproject.toml` and `uv.lock` of the sandboxes' shared Python environment, see Sandbox. |
@@ -33,7 +33,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 2. The worker picks the backend (see Backends) and waits for a slot on it. The progress message shows the ETA (see Progress and ETA).
 3. The host snapshots the pi session file, refreshes the work folder links (`attachments`, `store/*`, `guide`, the game's knowledge), writes pi's `models.json` and `settings.json`, and opens the host socket.
 4. pi runs in firejail with `--mode json --print --session <file>`. The prompt is a `[host]` timestamp line, then every queued message as `Name: text` plus attachment notes. In forums, a note gives the post's title when the model hasn't seen it yet or it changed, since the title is often the question itself.
-5. On success the queued messages are dropped, the answer replaces the progress message, and parts over 2000 characters go into follow-up messages. Every answer ends with the fixed mention reminder.
+5. On success the queued messages are dropped, the answer replaces the progress message, and parts over 2000 characters go into follow-up messages. Every answer ends with the fixed mention reminder. Some models write the conversation out again before their answer. When an answer starts with one of Clangy's earlier answers (40 characters or more), the host cuts that and any further copied answers and `Name: text` lines that follow, and puts the shortened answer into the pi session too, since later answers would copy the copy. An answer that is only a copy is posted as it is.
 6. On a timeout, backend failure or other failure the session file is restored from the snapshot, so partial output never reaches the next run, and the queued messages stay queued.
 
 ### When Clangy responds
