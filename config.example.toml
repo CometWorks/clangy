@@ -12,6 +12,8 @@ health_interval = 30.0
 max_retries = 3
 switch_margin = 60.0
 retention_days = 30
+# Skills the model isn't told about; their files stay readable
+hidden_skills = ["se-dev-plugin-review"]
 # Caps the context on every backend; unset means the smallest backend context_window
 # context_window = 131072
 
@@ -113,14 +115,18 @@ prompt = "This is the SE1 plugin developer channel. Most questions are about plu
 
 # Each source becomes a link in the conversation's work folder. Folders (path) are used in place,
 # git repositories (url) are mirrored by `clangy sync-knowledge`.
-# Linked into every conversation, whatever the game. The prompt has longer answers follow this skill.
+# Linked into every conversation, whatever the game, like the ecosystem's repos the prompt refers to.
 [[mounts]]
-link = "knowledge/humanizer"
-url = "https://github.com/blader/humanizer.git"
+link = "repos"
+path = "/home/clangy/repos"
 
 [[knowledge.se1]]
 link = "knowledge/skills"
 path = "/home/clangy/repos/CometWorks/skills/skills"
+
+[[knowledge.se1]]
+link = "knowledge/sdk"
+path = "/home/clangy/repos/CometWorks/magnetar/skills"
 
 [[knowledge.se1]]
 link = "knowledge/books"

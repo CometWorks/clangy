@@ -34,7 +34,7 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 │   ├── clone-or-pull        clones and pulls these and forgejo/ daily, rebuilds the venvs, syncs the hub plugins
 │   ├── CometWorks/skills/   SE1 skills, linked as knowledge/skills
 │   ├── CometWorks/skills2/  SE2 skills, linked as knowledge/skills
-│   ├── blader/humanizer/    writing skill, linked as knowledge/humanizer
+│   ├── CometWorks/magnetar/ its skills/ folder (se-dev-plugin-sdk) linked as knowledge/sdk for SE1
 │   ├── pulsar-se1-plugins/<owner>/<repo>/   PluginHub plugins at their registered commits
 │   ├── pulsar-se2-plugins/<owner>/<repo>/   PluginHub-SE2 plugins
 │   ├── magnetar-plugins/<owner>/<repo>/     MagnetarHub plugins
@@ -151,7 +151,7 @@ The plugin skills get every hub plugin's source without downloading anything. `d
 
 The code skills run their scripts with `uv run` from their own `.venv`. In the sandbox the skills are read-only and offline, so `sandbox.env` makes uv use the venvs as they are (`UV_NO_SYNC`, `UV_OFFLINE`), and the sandbox may read uv's Python installs (the SE1 skills pin Python 3.11). `~/repos/clone-or-pull` builds the venvs after every pull, as `clangy` and outside the sandbox, with `uv sync --frozen` in each skill folder and each `~/forgejo` clone that has a `pyproject.toml`. After moving a skills clone, delete its `.venv` folders first: a venv holds absolute paths, and `uv sync` doesn't rewrite them. Venvs copied from another machine don't work, they point to that machine's Python. Searches and graph queries work from the prepared indexes and graphs; preparing, indexing, downloading and refreshing the mod and script listings (which need the installed game) don't work in the sandbox.
 
-The humanizer skill comes from `~/repos/blader/humanizer`, which `~/repos/clone-or-pull` keeps up to date. It is a `[[mounts]]` entry linked as `knowledge/humanizer`, so it is there before the game is known; the system prompt tells Clangy to read it for any answer longer than a sentence.
+The SE1 skills point server plugin developers to `se-dev-plugin-sdk`, which lives in the Magnetar repo, so `~/repos/CometWorks/magnetar/skills` is a `[[knowledge.se1]]` source linked as `knowledge/sdk`. `hidden_skills` keeps `se-dev-plugin-review` off the skill list, since it posts to GitHub.
 
 The clangy user's own pi loads the same skills through `skills` in `~/.pi/agent/settings.json`.
 
