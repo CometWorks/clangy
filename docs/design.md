@@ -63,7 +63,7 @@ pi runs as `firejail ... -- env -i <vars> pi ...`:
 
 - `--net=none`: the sandbox has only its own loopback. The pi extension listens on `127.0.0.1:$CLANGY_PORT` and pipes connections to the host socket in the work folder. That socket is the only way out.
 - The environment is replaced. The Discord token and backend API keys stay on the host. The proxy adds the API key to forwarded requests.
-- The work folder is the only writable path. The attachments, the store folders, the guide, the `[[mounts]]` (the nas: `~/repos` and the humanizer skill), the conversation's knowledge snapshot, the shared Python environment, the package and the configured `sandbox.read_only` paths (node, pi, uv's Pythons) are read-only. `sandbox.env` adds environment variables, e.g. to keep uv offline for the skills' scripts.
+- The work folder is the only writable path. The attachments, the store folders, the guide, the `[[mounts]]` (the nas: `~/repos` and the skills' prepared data), the conversation's knowledge snapshot, the shared Python environment, the package and the configured `sandbox.read_only` paths (node, pi, uv's Pythons) are read-only. `sandbox.env` adds environment variables, e.g. to keep uv offline for the skills' scripts.
 - No capabilities, no root, seccomp, private `/dev` and `/tmp`.
 - No per-sandbox memory limit: firejail's `--rlimit-as` breaks Node.js, whose WebAssembly reserves large address ranges. The systemd unit caps the whole service with `MemoryMax` and `TasksMax` instead.
 
@@ -138,9 +138,11 @@ A restart during a run turns that run's progress message into a failure note. Th
 
 A channel can fix the game (`game = "se1"`). Otherwise the agent settles it from the conversation and calls `set_game`: a game a user names, SE2 when an executable, path or log is SE2's, else SE1 by default, which it mentions in a few words so users can correct it. It asks only when the hints contradict each other, and calls `set_game` again if a later message shows the other game. The host records it and links `knowledge/` to the matching tree, and the tool's reply tells the model the game and lists its skills, so the run goes on with the knowledge in place. If the run fails, its session is restored, so the same text goes into the next run's prompt as a `[host]` note.
 
-When the game is known, the `set_game` reply (or the `[host]` note of a channel's fixed game) lists the skills under `knowledge/`: every `SKILL.md` up to two folders deep in the game's knowledge and in the mounts linked there, with the name and description from its frontmatter and its path, like pi's own skill list. The model is told to read the matching `SKILL.md` and follow it. pi's own skill loading isn't used, because Clangy replaces pi's system prompt to keep it cache-stable, and the list depends on the game.
+When the game is known, the `set_game` reply (or the `[host]` note of a channel's fixed game) lists the skills under `knowledge/`: every `SKILL.md` up to two folders deep in the game's knowledge and in the mounts linked there, with the name and description from its frontmatter and its path, like pi's own skill list. `hidden_skills` leaves some out, such as the plugin review skill, which posts to GitHub. The model is told to read the matching `SKILL.md` and follow it. pi's own skill loading isn't used, because Clangy replaces pi's system prompt to keep it cache-stable, and the list depends on the game.
 
-A mount is linked from the first run, before the game is known. The nas mounts the humanizer skill as `knowledge/humanizer`, and the system prompt has the model read it before any answer longer than one sentence.
+A mount is linked from the first run, before the game is known.
+
+The writing rules are a short version of the [humanizer](https://github.com/blader/humanizer) skill in the system prompt itself. The free models skipped reading a writing skill in about half of the answers that needed it, and rules in the prompt apply to every answer.
 
 The knowledge is linked into the work folder, and ripgrep and fd don't follow links by default, so `sandbox-bin/rg` and `sandbox-bin/fd`, first on the sandbox's `PATH`, add `--follow` for pi's grep and find. `sandbox-bin/find` adds `-H` for the shell's find, which otherwise doesn't descend into a link given as the start path, such as a plugin skill's `Data/Sources/<repo>`.
 

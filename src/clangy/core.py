@@ -868,8 +868,11 @@ class Clangy:
             for depth in ("", "*/", "*/*/"):
                 for skill_file in sorted(target.glob(f"{depth}SKILL.md")):
                     name, description = skill_frontmatter(skill_file)
+                    name = name or skill_file.parent.name
+                    if name in self.config.hidden_skills:
+                        continue
                     path = f"{link}/{skill_file.relative_to(target).as_posix()}"
-                    found.append((name or skill_file.parent.name, description, path))
+                    found.append((name, description, path))
         return found
 
     # Work folder and sandbox

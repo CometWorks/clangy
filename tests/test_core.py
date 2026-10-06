@@ -930,26 +930,35 @@ async def test_knowledge_note_lists_the_skills(bot, config, tmp_path):
     books = tmp_path / "srv" / "books"
     (books / "se-dev-game-book").mkdir(parents=True)
     (books / "se-dev-game-book" / "SKILL.md").write_text('---\nname: se-dev-game-book\ndescription: "Handbook"\n---\n')
-    humanizer = tmp_path / "srv" / "humanizer"
-    humanizer.mkdir()
-    (humanizer / "SKILL.md").write_text(
-        "---\nname: humanizer\ndescription: |\n  Rewrite AI-sounding text.\n  Use for prose.\nmetadata:\n  version: 2\n---\n"
+    (skills / "se-dev-plugin-review").mkdir()
+    (skills / "se-dev-plugin-review" / "SKILL.md").write_text(
+        "---\nname: se-dev-plugin-review\ndescription: Review\n---\n"
+    )
+    sdk = tmp_path / "srv" / "sdk"
+    (sdk / "se-dev-plugin-sdk").mkdir(parents=True)
+    (sdk / "se-dev-plugin-sdk" / "SKILL.md").write_text(
+        "---\nname: se-dev-plugin-sdk\ndescription: |\n  Magnetar's PluginSdk.\n  For server plugins.\nlicense: MIT\n---\n"
     )
     config.knowledge["se1"] = [
         KnowledgeSource(path=skills, link="knowledge/skills"),
         KnowledgeSource(path=books, link="knowledge/books"),
     ]
-    config.mounts = [KnowledgeSource(path=humanizer, link="knowledge/humanizer")]
+    config.mounts = [KnowledgeSource(path=sdk, link="knowledge/sdk")]
+    config.hidden_skills = ["se-dev-plugin-review"]
     bot.agent.script = [tool("set_game", {"game": "se1"}, answer("SE1 answer."))]
     await bot.on_message(forum_post(SUPPORT, 1080, "Do we have foxes in SE1?"))
     await bot.wait_idle()
-    assert bot.agent.specs[0].read_only.count(humanizer) == 1, "a mount is there before the game is known"
+    assert bot.agent.specs[0].read_only.count(sdk) == 1, "a mount is there before the game is known"
     second = bot.agent.tool_results[0][1]["text"]
     assert second.startswith("Recorded. This conversation is about SE1. Its knowledge is under knowledge/.")
     assert "- se-dev: Overview (knowledge/skills/se-dev/SKILL.md)" in second
     assert "- se-dev-game-code: Decompiled game code (knowledge/skills/se-dev-game-code/SKILL.md)" in second
     assert "- se-dev-game-book: Handbook (knowledge/books/se-dev-game-book/SKILL.md)" in second
-    assert "- humanizer: Rewrite AI-sounding text. Use for prose. (knowledge/humanizer/SKILL.md)" in second
+    assert (
+        "- se-dev-plugin-sdk: Magnetar's PluginSdk. For server plugins. (knowledge/sdk/se-dev-plugin-sdk/SKILL.md)"
+        in second
+    )
+    assert "se-dev-plugin-review" not in second, "a hidden skill isn't listed"
     assert bot.conversations[1080].host_notes == []
 
 

@@ -20,6 +20,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `switch_margin` | `60` | A conversation moves to another backend only if that one answers sooner by this much, even after reading the whole conversation again. See design.md, Backends. |
 | `retention_days` | `30` | Conversations (all but `metrics.jsonl`) and records not touched for this long are deleted at startup. The message cache keeps two days at most. See design.md, Retention. |
 | `secret_markers` | book names, `knowledge/books` | Answers containing any of these (case-insensitive) are withheld. |
+| `hidden_skills` | none | Skill names left out of the skill list the model gets, e.g. ones that need tools the sandbox lacks. Their files stay readable. |
 
 ## `[sandbox]`
 
@@ -99,4 +100,4 @@ Each source has either `path` or `url`.
 
 ## `[[mounts]]`
 
-Sources like the knowledge ones (`link` plus `path` or `url`), but linked into every conversation whatever the game. The nas mounts `~/repos` as `repos`, the ecosystem and plugin repositories the prompt refers to, and the humanizer skill as `knowledge/humanizer`, which the prompt has the model follow. A mount linked under `knowledge/` is listed with the game's skills.
+Sources like the knowledge ones (`link` plus `path` or `url`), but linked into every conversation whatever the game. The nas mounts `~/repos` as `repos`, the ecosystem and plugin repositories the prompt refers to. A mount linked under `knowledge/` is listed with the game's skills.
