@@ -201,7 +201,7 @@ class HostServer:
         if run.slot is not None:
             body["id_slot"] = run.slot
             body["cache_prompt"] = True
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", **backend.headers}
         if run.backend.api_key:
             headers["Authorization"] = f"Bearer {run.backend.api_key}"
 

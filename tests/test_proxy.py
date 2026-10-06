@@ -149,6 +149,11 @@ async def test_extra_body_and_key_from_config_reach_the_backend(backend, tmp_pat
     assert run.stats.per_request[0]["model"] == "b/model:free", "the model that answered"
 
 
+async def test_headers_from_config_reach_the_backend(backend, tmp_path):
+    await chat_once(cloud(backend.url, headers={"HTTP-Referer": "https://pi.dev"}), tmp_path)
+    assert backend.headers[0]["HTTP-Referer"] == "https://pi.dev"
+
+
 @pytest.mark.parametrize("code", [403, 429])
 async def test_rate_and_key_limits_are_backend_failures(backend, tmp_path, code):
     backend.status = code

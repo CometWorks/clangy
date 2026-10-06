@@ -10,6 +10,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `workspace_dir` | `<data_dir>/workspace` | Tickets, notes and plans, kept past `retention_days`. See design.md, Store. |
 | `discord_token` | `""` | Bot token. Falls back to the `DISCORD_TOKEN` environment variable. Keep the config readable only by the bot's user. |
 | `context_window` | smallest backend `context_window` | Caps the context pi may use on every backend. A conversation can move to another backend between runs, so the default keeps it within the smallest one. |
+| `headers` | pi's attribution | Sent with every backend's chat completion requests: `HTTP-Referer = "https://pi.dev"`, `X-OpenRouter-Title = "pi"`, `X-OpenRouter-Categories = "cli-agent"`. OpenRouter serves some free models, such as `thinkingmachines/inkling:free`, only to agent harnesses it lists and answers 403 otherwise. pi sends this itself only when it talks to OpenRouter directly; here it talks to the proxy. A backend's `headers` override single keys. |
 | `run_deadline` | `600` | Hard limit of a run after it leaves the queue. |
 | `attachment_max_bytes` | 25 MiB | Larger attachments aren't downloaded; the agent gets a note instead. |
 | `answer_max_bytes` | 10 MiB | Total size of the files attached to one answer. Keep it within the server's upload limit. Each file is limited to 5 MB regardless. |
@@ -51,6 +52,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `compat` | `{}` | pi `compat` options for the model, e.g. `thinkingFormat = "qwen-chat-template"`. See pi's `docs/models.md`. |
 | `prompt_tps`, `gen_tps` | `300`, `40` | Starting speeds for the ETA. Measured speeds replace them (llama.cpp reports them; cloud APIs don't, so their values stay). |
 | `extra_body` | `{}` | Merged into every chat completion request, after `model`. Carries OpenRouter's `models` and `provider`. A `reasoning` key is refused; set `thinking` instead. |
+| `headers` | `{}` | Sent with every chat completion request, over the top-level `headers`, key by key. |
 | `first_byte_timeout` | none | A request fails if no data arrives for this long. Only for cloud APIs: llama.cpp sends nothing while it reads a long prompt. Keep-alive comments don't count as data. |
 | `stall_timeout` | none | A request fails if its stream stops for this long after the first data. |
 | `cooldown` | `60` | Kinds other than `llamacpp`: how long a failed backend gets no runs, longer if it sent `Retry-After`. |

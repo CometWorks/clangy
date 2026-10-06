@@ -5,6 +5,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 Game = Literal["se1", "se2"]
+PI_ATTRIBUTION = {"HTTP-Referer": "https://pi.dev", "X-OpenRouter-Title": "pi", "X-OpenRouter-Categories": "cli-agent"}
+"""pi's own OpenRouter attribution. pi sends it only when it talks to OpenRouter itself, never through the proxy."""
 ChannelMode = Literal["support", "record", "mention"]
 
 
@@ -31,6 +33,8 @@ class BackendConfig(BaseModel):
     gen_tps: float = 40.0
     extra_body: dict[str, Any] = Field(default_factory=dict)
     """Merged into every chat completion request, e.g. OpenRouter's `models` and `provider`."""
+    headers: dict[str, str] = Field(default_factory=dict)
+    """Sent with every chat completion request, over the top-level headers."""
     first_byte_timeout: float | None = None
     """A request fails if no data arrives for this long. Not for llama.cpp, it's silent while reading a prompt."""
     stall_timeout: float | None = None
@@ -109,6 +113,9 @@ class Config(BaseModel):
     context_window: int | None = Field(None, gt=0)
     """Caps the context on every backend. Defaults to the smallest backend context_window, so a conversation still
     fits after it moves to another backend."""
+    headers: dict[str, str] = Field(default_factory=lambda: dict(PI_ATTRIBUTION))
+    """Sent with every backend's chat completion requests; a backend's own headers override single keys. OpenRouter
+    serves some free models only to the agent harnesses it lists, so this names pi."""
     channels: list[ChannelConfig] = Field(default_factory=list)
     run_deadline: float = 600.0
     attachment_max_bytes: int = 25 * 1024**2
@@ -126,6 +133,12 @@ class Config(BaseModel):
     knowledge: dict[Game, list[KnowledgeSource]] = Field(default_factory=dict)
     mounts: list[KnowledgeSource] = Field(default_factory=list)
     """Like knowledge, but linked into every conversation whatever the game, e.g. the ecosystem's repos."""
+
+    @model_validator(mode="after")
+    def _merge_headers(self) -> "Config":
+        for backend in self.backends:
+            backend.headers = self.headers | backend.headers
+        return self
 
     def context_limit(self) -> int:
         return self.context_window or min(b.context_window for b in self.backends)
