@@ -34,7 +34,7 @@ def test_firejail_command(tmp_path):
     assert path.split(":")[1] == "/v/bin", "the shared Python environment"
     # Secrets from the host environment never reach the sandbox
     assert not any(arg.startswith(("DISCORD", "CLANGY_TEST_KEY")) for arg in inner)
-    assert inner[-1] == "[host] hi"
+    assert "[host] hi" not in command, "the prompt goes to stdin: firejail refuses arguments over 4 KiB"
     assert inner[inner.index("--model") + 1] == "clangy/clangy", "one model id on every backend"
 
 
@@ -92,6 +92,27 @@ async def test_run_pi_parses_events(tmp_path):
     assert result.answer == "Hi"
     assert result.tools == ["grep"]
     assert turns == [1]
+
+
+async def test_run_pi_sends_the_prompt_to_stdin(tmp_path):
+    sandbox = fake_pi(
+        tmp_path,
+        """
+        import json, sys
+        text = sys.stdin.read()
+        content = [{"type": "text", "text": str(len(text))}]
+        print(json.dumps({"type": "agent_end", "messages": [{"role": "assistant", "content": content}]}))
+        """,
+    )
+    result = await run_pi(spec(tmp_path, sandbox, prompt="x" * 100_000), 1, 10.0, lambda: None)
+    assert result.answer == "100000"
+
+
+async def test_run_pi_logs_long_stderr(tmp_path, caplog):
+    sandbox = fake_pi(tmp_path, "import sys; sys.stderr.write('Error: bad' + 'x' * 10_000); sys.exit(1)")
+    result = await run_pi(spec(tmp_path, sandbox, prompt="x" * 1_000_000), 1, 10.0, lambda: None)
+    assert "Error: bad" in caplog.text, "the start of a long error is logged, even if pi never read the prompt"
+    assert result.error is not None and result.error.startswith("pi exited with 1: ")
 
 
 async def test_run_pi_deadline(tmp_path):

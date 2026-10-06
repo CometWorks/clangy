@@ -24,6 +24,10 @@ TOOLS = ",".join(["read", "grep", "find", "ls", "bash", *HOST_TOOLS])
 PI_MODEL = "clangy"
 """The model id pi sees on every backend; the host sets the real one. pi turns the reasoning of another model's
 turns into plain text, which would happen whenever a conversation moves between backends."""
+STDERR_LOG_LIMIT = 64 * 1024
+"""Characters of pi's stderr logged when it fails; tools may print the whole prompt before the actual error."""
+STDERR_ERROR_LIMIT = 4000
+"""Characters of pi's stderr kept in the run's error, which goes into the metrics."""
 
 
 @dataclass
@@ -107,6 +111,7 @@ def write_pi_config(paths: RunPaths, backend: BackendConfig, port: int, context_
 
 
 def pi_arguments(spec: RunSpec) -> list[str]:
+    """pi's command line; the prompt goes to its stdin, since firejail refuses arguments over 4 KiB."""
     return [
         *spec.sandbox.pi_command,
         "--mode", "json", "--print", "--offline",
@@ -117,7 +122,6 @@ def pi_arguments(spec: RunSpec) -> list[str]:
         "--model", f"clangy/{PI_MODEL}",
         "--thinking", spec.backend.thinking,
         "--system-prompt", str(spec.paths.system_prompt),
-        spec.prompt,
     ]  # fmt: skip
 
 
@@ -185,7 +189,7 @@ async def run_pi(spec: RunSpec, port: int, deadline: float, on_turn: Callable[[]
     process = await asyncio.create_subprocess_exec(
         *command,
         cwd=spec.paths.work,
-        stdin=asyncio.subprocess.DEVNULL,
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,
@@ -196,7 +200,13 @@ async def run_pi(spec: RunSpec, port: int, deadline: float, on_turn: Callable[[]
 
     async def consume() -> None:
         nonlocal result
-        assert process.stdout is not None
+        assert process.stdin is not None and process.stdout is not None
+        try:
+            process.stdin.write(spec.prompt.encode())
+            await process.stdin.drain()
+            process.stdin.close()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # pi exited before reading the prompt; its stderr says why
         async for line in process.stdout:
             try:
                 event = json.loads(line)
@@ -222,8 +232,8 @@ async def run_pi(spec: RunSpec, port: int, deadline: float, on_turn: Callable[[]
             await process.wait()
     if process.returncode != 0 and result.answer is None:
         assert process.stderr is not None
-        stderr = (await process.stderr.read()).decode(errors="replace")[-2000:]
+        stderr = (await process.stderr.read()).decode(errors="replace")[-STDERR_LOG_LIMIT:]
         log.warning("pi exited with %s: %s", process.returncode, stderr)
-        result.error = f"pi exited with {process.returncode}: {stderr[-500:]}"
+        result.error = f"pi exited with {process.returncode}: {stderr[-STDERR_ERROR_LIMIT:]}"
     result.tools = tools
     return result
