@@ -6,14 +6,14 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-KINDS = {"ticket": ("tickets", "T", ""), "note": ("notes", "N", "NOTE.md"), "plan": ("plans", "P", "PLAN.md")}
+KINDS = {"ticket": ("tickets", "DIS", ""), "note": ("notes", "N", "NOTE.md"), "plan": ("plans", "P", "PLAN.md")}
 """Folder, id prefix, and the main file of a document that has its own folder for its files."""
 CLOSED = ("completed", "canceled")
 """Subfolders of tickets that developers move finished tickets to."""
 TEMPLATES = Path(__file__).parent / "templates"
 TITLE_MAX = 120
 BODY_MAX = 20000
-ID_RE = re.compile(r"^[TNP]-\d{4}$")
+ID_RE = re.compile(r"^(DIS|N|P)-\d{4}$")
 
 KeptFile = tuple[Path, str]
 """A file to keep with a document, and its line in the list of files."""
@@ -80,7 +80,7 @@ class Store:
 
     def add_report(self, ticket_id: str, body: str, meta: dict[str, str], files: list[KeptFile] = ()) -> None:
         """Adds a repeated report of the same problem to an open ticket, above the work log."""
-        if not ID_RE.match(ticket_id) or not ticket_id.startswith("T-"):
+        if not ID_RE.match(ticket_id) or not ticket_id.startswith("DIS-"):
             raise StoreError(f"not a ticket id: {ticket_id}")
         tickets = self.root / "tickets"
         path = tickets / f"{ticket_id}.md"
@@ -130,7 +130,8 @@ class Store:
         folder, prefix, main = KINDS[kind]
         directory = self.root / folder
         searched = [directory, *(directory / c for c in CLOSED if kind == "ticket")]
-        taken = (p.name[2:6] for d in searched for p in d.glob(f"{prefix}-[0-9][0-9][0-9][0-9]*"))
+        start = len(prefix) + 1
+        taken = (p.name[start : start + 4] for d in searched for p in d.glob(f"{prefix}-[0-9][0-9][0-9][0-9]*"))
         number = 1 + max((int(n) for n in taken), default=0)
         if files:
             body += "\n\n# Files\n\n" + "".join(f"- `{target}`: {line}\n" for target, line in _targets(files))

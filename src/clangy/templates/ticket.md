@@ -1,5 +1,5 @@
 ---
-id: T-0000, the next free number
+id: DIS-0000, the next free number
 title: What the problem is
 created: 2026-01-01T00:00:00Z, UTC
 thread: Link to the Discord thread of the report

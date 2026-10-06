@@ -76,7 +76,7 @@ const tools = [
 	{
 		name: "ticket_add_report",
 		description: "Add a repeated report of the same problem to an existing ticket.",
-		parameters: Type.Object({ id: Type.String({ description: "Ticket id, e.g. T-0012" }), body, files }),
+		parameters: Type.Object({ id: Type.String({ description: "Ticket id, e.g. DIS-0012" }), body, files }),
 	},
 	{
 		name: "note_create",

@@ -11,7 +11,7 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 ├── AGENTS.md                rules for agents working in the workspace, written once from templates/
 ├── tickets/                 problem reports for the developers, see design.md, Store
 │   ├── Template.md          written once from templates/
-│   ├── T-0001.md
+│   ├── DIS-0001.md
 │   ├── completed/
 │   └── canceled/
 ├── notes/

@@ -437,7 +437,7 @@ async def test_ticket_tools_link_thread_and_keep_files(bot, chat, config):
 
     bot.agent.script = [
         analyze,
-        tool("ticket_add_report", {"id": "T-0001", "body": "Again"}, answer("Added.")),
+        tool("ticket_add_report", {"id": "DIS-0001", "body": "Again"}, answer("Added.")),
         tool("ticket_create", {"title": "", "body": "x"}, answer("Oops.")),
         tool(
             "note_create",
@@ -453,19 +453,19 @@ async def test_ticket_tools_link_thread_and_keep_files(bot, chat, config):
     assert "[host] Attachment from Alice: attachments/1015-info.log (1 KB)" in bot.agent.prompts[0]
     workspace = config.data_dir / "workspace"
     assert (work / "store" / "tickets").resolve() == (workspace / "tickets").resolve()
-    ticket = (workspace / "tickets" / "T-0001.md").read_text()
+    ticket = (workspace / "tickets" / "DIS-0001.md").read_text()
     assert f"thread: https://discord.com/channels/{GUILD}/1015\n" in ticket
     assert "game: se1\n" in ticket and "notes: N-0001\n" in ticket and "files:" not in ticket
     note = workspace / "notes" / "N-0001"
     assert (note / "1015-info.log").read_bytes() == b"log data" and (note / "plot.png").read_bytes() == b"png"
     listing = (note / "NOTE.md").read_text()
-    assert "ticket: T-0001\n" in listing
+    assert "ticket: DIS-0001\n" in listing
     assert "- `1015-info.log`: Pulsar log (posted by Alice, " in listing
     assert "- `plot.png`: Frame times (written by Clangy)" in listing
     for prompt in ("@Clangy same", "@Clangy bad", "@Clangy leak"):
         await bot.on_message(message(1015, prompt, parent_id=SE1_FORUM, mentions_bot=True))
         await bot.wait_idle()
-    assert bot.agent.tool_results[1] == (200, {"text": "Added the report to T-0001."})
+    assert bot.agent.tool_results[1] == (200, {"text": "Added the report to DIS-0001."})
     assert bot.agent.tool_results[2] == (400, {"error": "title is empty"})
     assert bot.agent.tool_results[3] == (
         400,

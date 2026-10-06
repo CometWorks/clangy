@@ -192,7 +192,7 @@ Sent: the agent writes files in its work folder (by convention `out/`) and calls
 Tickets, notes and plans are for the developers, so they live in a workspace laid out like the developers' own (`workspace_dir`, the `clangy` home folder on the nas) and outlive the conversations:
 
 - `AGENTS.md`: the rules for agents working in the workspace.
-- `tickets/T-0001.md`, with `Template.md`, and `completed/` and `canceled/` for the tickets developers have finished.
+- `tickets/DIS-0001.md`, with `Template.md`, and `completed/` and `canceled/` for the tickets developers have finished.
 - `notes/N-0001.md`, or `notes/N-0001/` with `NOTE.md` and files. The same for `plans/` with `PLAN.md`.
 
 The host writes `AGENTS.md` and the template from `templates/` when they are missing, and never touches them after that, so they can be edited on the host.
