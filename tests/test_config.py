@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from clangy.config import BackendConfig, Config, KnowledgeSource
+from clangy.config import PI_ATTRIBUTION, BackendConfig, Config, KnowledgeSource
 
 ROOT = Path(__file__).parent.parent
 
@@ -36,6 +36,16 @@ def test_context_limit_defaults_to_the_smallest_backend(tmp_path):
     ]
     assert Config(data_dir=tmp_path, backends=backends).context_limit() == 184320
     assert Config(data_dir=tmp_path, backends=backends, context_window=100000).context_limit() == 100000
+
+
+def test_backends_send_pi_attribution_unless_overridden(tmp_path):
+    backends = [
+        BackendConfig(name="a", url="http://x/v1", model="m"),
+        BackendConfig(name="b", url="http://x/v1", model="m", headers={"X-OpenRouter-Title": "b", "X-Extra": "1"}),
+    ]
+    a, b = Config(data_dir=tmp_path, backends=backends).backends
+    assert a.headers == PI_ATTRIBUTION
+    assert b.headers == PI_ATTRIBUTION | {"X-OpenRouter-Title": "b", "X-Extra": "1"}
 
 
 def test_reasoning_in_extra_body_is_refused():
