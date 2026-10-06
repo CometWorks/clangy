@@ -19,7 +19,6 @@ const systemPrompt = readFileSync(process.env.CLANGY_SYSTEM_PROMPT!, "utf-8");
 
 interface HostReply {
 	text: string;
-	stop: boolean;
 }
 
 function callHost(name: string, params: unknown): Promise<HostReply> {
@@ -113,10 +112,8 @@ export default function (pi: ExtensionAPI) {
 		pi.registerTool({
 			...tool,
 			label: tool.name,
-			async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			async execute(_toolCallId, params) {
 				const reply = await callHost(tool.name, params);
-				// The host restarts the run, e.g. with the game's knowledge mounted after set_game
-				if (reply.stop) ctx.abort();
 				return { content: [{ type: "text", text: reply.text }], details: {} };
 			},
 		});

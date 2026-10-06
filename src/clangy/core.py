@@ -23,7 +23,7 @@ from clangy.cache import MessageCache
 from clangy.config import ChannelConfig, Config, Game, SandboxConfig
 from clangy.files import FileError, Outbox, safe_filename
 from clangy.messages import Attachment, IncomingMessage
-from clangy.proxy import HostServer, ProxyRun, RunStats, TcpRelay, ToolError, ToolReply
+from clangy.proxy import HostServer, ProxyRun, RunStats, TcpRelay, ToolError
 from clangy.runner import PACKAGE_DIR, RunPaths, RunResult, RunSpec, free_port, replace_answer, run_pi, write_pi_config
 from clangy.store import KeptFile, Store, StoreError
 
@@ -139,8 +139,11 @@ class Progress:
         return f"{message} (retry {self.retry}/{max_retries})" if self.retry else message
 
 
+KNOWLEDGE_NOTE = "[host] This conversation is about "
+
+
 def knowledge_note_start(game: Game) -> str:
-    return f"[host] This conversation is about {game.upper()}."
+    return f"{KNOWLEDGE_NOTE}{game.upper()}."
 
 
 def skill_frontmatter(path: Path) -> tuple[str, str]:
@@ -162,6 +165,17 @@ def skill_frontmatter(path: Path) -> tuple[str, str]:
             value = value.strip()
             fields[key] = "" if value[:1] in ("|", ">") else value.strip("\"'")
     return fields.get("name", ""), fields.get("description", "")
+
+
+def link_all(work: Path, links: dict[str, Path | None]) -> None:
+    """Points the work folder's links at their targets; a link without a target is removed."""
+    for name, target in links.items():
+        link = work / name
+        if link.is_symlink():
+            link.unlink()
+        if target is not None:
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(target, target_is_directory=True)
 
 
 def proxy_relay(sandbox: SandboxConfig, paths: RunPaths) -> TcpRelay | contextlib.nullcontext:
@@ -188,6 +202,8 @@ class Clangy:
         self.conversations: dict[int, Conversation] = {}
         self._workers: dict[int, asyncio.Task] = {}
         self._outboxes: dict[int, Outbox] = {}
+        self._run_knowledge: dict[int, dict[Game | None, dict[str, Path | None]]] = {}
+        """Each running conversation's knowledge links per game, resolved at the start, for set_game to link."""
         self.cache = MessageCache(config.data_dir / "messages.sqlite")
         self._live_since = datetime.now(timezone.utc)
         """Since when the cache has every message of Clangy's channels and their threads."""
@@ -677,6 +693,7 @@ class Clangy:
         timing["steps"] = progress.steps
         self._log_metrics(conv, result, stats, timing)
         del self._outboxes[conv.thread_id]
+        del self._run_knowledge[conv.thread_id]
         del self._in_run[conv.thread_id]
         await self._finish(conv, backend, result, stats, consumed, delivered, outbox)
 
@@ -776,44 +793,34 @@ class Clangy:
     async def _execute(
         self, conv: Conversation, backend: Backend, prompt: str, progress: Progress, delivered: list[str]
     ) -> tuple[RunResult, RunStats]:
-        """Runs the agent; if it records the game version, runs again with the knowledge mounted."""
-        game = conv.game
+        """Runs the agent once; set_game links the game's knowledge during the run."""
         stats = RunStats()
-        tools: list[str] = []
         venv = await self.python_env()
-        for _ in range(2):
-            paths, read_only = self._prepare_work_dir(conv)
-            port = free_port()
-            write_pi_config(paths, backend.config, port, self.config.context_limit())
-            slot = await backend.take_slot(self.http, conv.key, time.monotonic())
-            run = ProxyRun(backend=backend, session=self.http, tools=self._tool_handler(conv), slot=slot)
-            run.stats = stats
-            spec = RunSpec(
-                paths=paths,
-                backend=backend.config,
-                sandbox=self.config.sandbox,
-                prompt=prompt,
-                read_only=read_only,
-                proxy_port=free_port() if self.config.sandbox.proxy else None,
-                venv=venv,
-            )
-            remaining = max(1.0, (progress.deadline or 0) - time.time())
+        paths, read_only = self._prepare_work_dir(conv)
+        port = free_port()
+        write_pi_config(paths, backend.config, port, self.config.context_limit())
+        slot = await backend.take_slot(self.http, conv.key, time.monotonic())
+        run = ProxyRun(backend=backend, session=self.http, tools=self._tool_handler(conv), slot=slot)
+        run.stats = stats
+        spec = RunSpec(
+            paths=paths,
+            backend=backend.config,
+            sandbox=self.config.sandbox,
+            prompt=prompt,
+            read_only=read_only,
+            proxy_port=free_port() if self.config.sandbox.proxy else None,
+            venv=venv,
+        )
+        remaining = max(1.0, (progress.deadline or 0) - time.time())
 
-            def on_turn() -> None:
-                progress.steps += 1
+        def on_turn() -> None:
+            progress.steps += 1
 
-            async with HostServer(run, paths.socket):
-                async with proxy_relay(self.config.sandbox, paths):
-                    result = await self.run_agent(spec, port, remaining, on_turn)
-            tools += result.tools
-            result.tools = tools
-            if conv.game == game or result.timed_out or stats.backend_failed:
-                return result, stats
-            game = conv.game
-            note = next(n for n in reversed(conv.host_notes) if n.startswith(knowledge_note_start(game)))
-            delivered.append(note)
-            # The text of the run that called set_game is never shown, so the model must answer again
-            prompt = f"{note} Now write your answer to the user's messages; don't refer to earlier drafts."
+        async with HostServer(run, paths.socket):
+            async with proxy_relay(self.config.sandbox, paths):
+                result = await self.run_agent(spec, port, remaining, on_turn)
+        # set_game's reply told the model the game, so the note is delivered unless the run fails
+        delivered += [n for n in conv.host_notes if n.startswith(KNOWLEDGE_NOTE) and n not in delivered]
         return result, stats
 
     def _prompt(self, conv: Conversation) -> str:
@@ -895,21 +902,18 @@ class Clangy:
             **{f"store/{name}": (self.store.root / name).resolve() for name in ("tickets", "notes", "plans")},
             "store/records": self.store.records.resolve(),
             "guide": GUIDE_DIR,
-            **self.knowledge_links(conv.game),
         }
-        for name, target in links.items():
-            link = paths.work / name
-            if link.is_symlink():
-                link.unlink()
-            if target is not None:
-                link.parent.mkdir(parents=True, exist_ok=True)
-                link.symlink_to(target, target_is_directory=True)
+        # Every game's knowledge is readable, so set_game only has to swap the links while pi runs
+        knowledge = {game: self.knowledge_links(game) for game in (None, *self.config.knowledge)}
+        self._run_knowledge[conv.thread_id] = knowledge
+        link_all(paths.work, links | knowledge.get(conv.game, knowledge[None]))
         channel = self.config.channel(conv.channel_id)
         system = SYSTEM_PROMPT.read_text()
         if channel is not None and channel.prompt:
             system += f"\n# Channel\n{channel.prompt.strip()}\n"
         paths.system_prompt.write_text(system)
-        return paths, [target for target in links.values() if target is not None]
+        targets = [*links.values(), *(t for game_links in knowledge.values() for t in game_links.values())]
+        return paths, list(dict.fromkeys(t for t in targets if t is not None))
 
     async def python_env(self) -> Path | None:
         """The sandboxes' shared Python environment, mounted read-only and first on their PATH. Built on first use.
@@ -977,8 +981,8 @@ class Clangy:
 
     # Host tools
 
-    def _tool_handler(self, conv: Conversation) -> Callable[[str, dict], Awaitable[ToolReply | str]]:
-        async def handle(name: str, params: dict) -> ToolReply | str:
+    def _tool_handler(self, conv: Conversation) -> Callable[[str, dict], Awaitable[str]]:
+        async def handle(name: str, params: dict) -> str:
             try:
                 return self._tool(conv, name, params)
             except (StoreError, FileError, KeyError, TypeError) as e:
@@ -986,7 +990,7 @@ class Clangy:
 
         return handle
 
-    def _tool(self, conv: Conversation, name: str, params: dict) -> ToolReply | str:
+    def _tool(self, conv: Conversation, name: str, params: dict) -> str:
         meta = {"thread": conv.url}
         if conv.game:
             meta["game"] = conv.game
@@ -1028,16 +1032,19 @@ class Clangy:
             kept.append((source, f"{about} ({origin})" if about else origin.capitalize()))
         return kept
 
-    def _set_game(self, conv: Conversation, game: str) -> ToolReply | str:
+    def _set_game(self, conv: Conversation, game: str) -> str:
         if game not in ("se1", "se2"):
             raise ToolError("game must be se1 or se2")
         if conv.game == game:
             return "Already recorded, the knowledge is under knowledge/."
         conv.game = game
-        conv.host_notes.append(self._knowledge_note(game))
+        note = self._knowledge_note(game)
+        # Kept for the next run in case this one fails and its session is restored
+        conv.host_notes = [n for n in conv.host_notes if not n.startswith(KNOWLEDGE_NOTE)] + [note]
         self.save(conv)
-        # The run ends here and starts again with the knowledge mounted
-        return ToolReply("Recorded. The knowledge is being mounted.", stop=True)
+        knowledge = self._run_knowledge[conv.thread_id]
+        link_all(self._work_dir(conv), knowledge.get(game, knowledge[None]))
+        return f"Recorded. {note.removeprefix('[host] ')}"
 
     # Output
 
