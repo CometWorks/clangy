@@ -51,3 +51,10 @@ def test_backends_send_pi_attribution_unless_overridden(tmp_path):
 def test_reasoning_in_extra_body_is_refused():
     with pytest.raises(ValidationError, match="thinking"):
         BackendConfig(name="b", url="http://x/v1", model="m", extra_body={"reasoning": {"effort": "minimal"}})
+
+
+def test_unknown_keys_are_refused(tmp_path):
+    with pytest.raises(ValidationError, match="initial_dealy"):
+        Config.model_validate(
+            {"data_dir": tmp_path, "backends": [], "channels": [{"id": 1, "mode": "support", "initial_dealy": 5}]}
+        )
