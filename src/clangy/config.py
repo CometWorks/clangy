@@ -2,7 +2,7 @@ import tomllib
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Game = Literal["se1", "se2"]
 PI_ATTRIBUTION = {"HTTP-Referer": "https://pi.dev", "X-OpenRouter-Title": "pi", "X-OpenRouter-Categories": "cli-agent"}
@@ -10,7 +10,13 @@ PI_ATTRIBUTION = {"HTTP-Referer": "https://pi.dev", "X-OpenRouter-Title": "pi", 
 ChannelMode = Literal["support", "record", "mention"]
 
 
-class BackendConfig(BaseModel):
+class Strict(BaseModel):
+    """Refuses unknown keys, so a misspelled or removed setting fails at startup instead of being ignored."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class BackendConfig(Strict):
     name: str
     url: str
     """OpenAI compatible base URL, including the `/v1` suffix."""
@@ -53,7 +59,7 @@ class BackendConfig(BaseModel):
         return self.url.removesuffix("/").removesuffix("/v1")
 
 
-class ChannelConfig(BaseModel):
+class ChannelConfig(Strict):
     id: int
     mode: ChannelMode
     initial_response: bool = False
@@ -67,7 +73,7 @@ class ChannelConfig(BaseModel):
     prompt: str = ""
 
 
-class SandboxConfig(BaseModel):
+class SandboxConfig(Strict):
     firejail: bool = True
     pi_command: list[str] = ["pi"]
     path: str = "/usr/local/bin:/usr/bin:/bin"
@@ -84,7 +90,7 @@ class SandboxConfig(BaseModel):
     """Interpreter of that environment, must be readable in the sandbox."""
 
 
-class KnowledgeSource(BaseModel):
+class KnowledgeSource(Strict):
     link: str
     """Where it appears in the work folder: knowledge/skills, knowledge/books, or e.g. .se-dev for data the
     skills expect in the home folder."""
@@ -103,7 +109,7 @@ class KnowledgeSource(BaseModel):
         return self
 
 
-class Config(BaseModel):
+class Config(Strict):
     data_dir: Path
     workspace_dir: Path | None = None
     """Tickets, notes and plans, kept past retention_days. Defaults to `<data_dir>/workspace`."""
