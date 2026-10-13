@@ -188,6 +188,11 @@ path = "/home/clangy/repos/CometWorks/skills/skills"
 link = "knowledge/sdk"
 path = "/home/clangy/repos/CometWorks/magnetar/skills"
 
+# quasar-book, the Quasar handbook, which lives in the Quasar repo
+[[knowledge.se1]]
+link = "knowledge/quasar"
+path = "/home/clangy/repos/CometWorks/quasar/skills"
+
 [[knowledge.se1]]
 link = "knowledge/books"
 path = "/home/clangy/forgejo/se-dev-books/skills"

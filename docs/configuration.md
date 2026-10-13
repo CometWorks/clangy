@@ -92,7 +92,7 @@ Knowledge mounted for conversations about that game. Each source is a link in th
 
 | Key | Meaning |
 |---|---|
-| `link` | Relative path in the work folder: `knowledge/skills`, `knowledge/books` (the prompt refers to these), or e.g. `.se-dev` for prepared data the skills expect in the home folder, which is the work folder in the sandbox. |
+| `link` | Relative path in the work folder: `knowledge/skills`, `knowledge/books` (the prompt refers to these), another folder under `knowledge/` such as `knowledge/sdk` (its skills are listed like the others), or e.g. `.se-dev` for prepared data the skills expect in the home folder, which is the work folder in the sandbox. |
 | `path` | A folder used in place, read-only. |
 | `url` | A git repository mirrored by `clangy sync-knowledge`. The host needs read access, for example SSH keys for the private book repositories. |
 
