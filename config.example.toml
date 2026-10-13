@@ -129,6 +129,10 @@ link = "knowledge/sdk"
 path = "/home/clangy/repos/CometWorks/magnetar/skills"
 
 [[knowledge.se1]]
+link = "knowledge/quasar"
+path = "/home/clangy/repos/CometWorks/quasar/skills"
+
+[[knowledge.se1]]
 link = "knowledge/books"
 url = "https://git.cometworks.se/CometWorks/se-dev-books.git"
 

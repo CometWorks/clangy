@@ -35,6 +35,7 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 │   ├── CometWorks/skills/   SE1 skills, linked as knowledge/skills
 │   ├── CometWorks/skills2/  SE2 skills, linked as knowledge/skills
 │   ├── CometWorks/magnetar/ its skills/ folder (se-dev-plugin-sdk) linked as knowledge/sdk for SE1
+│   ├── CometWorks/quasar/   its skills/ folder (quasar-book) linked as knowledge/quasar for SE1
 │   ├── pulsar-se1-plugins/<owner>/<repo>/   PluginHub plugins at their registered commits
 │   ├── pulsar-se2-plugins/<owner>/<repo>/   PluginHub-SE2 plugins
 │   ├── magnetar-plugins/<owner>/<repo>/     MagnetarHub plugins
@@ -151,7 +152,7 @@ The plugin skills get every hub plugin's source without downloading anything. `d
 
 The code skills run their scripts with `uv run` from their own `.venv`. In the sandbox the skills are read-only and offline, so `sandbox.env` makes uv use the venvs as they are (`UV_NO_SYNC`, `UV_OFFLINE`), and the sandbox may read uv's Python installs (the SE1 skills pin Python 3.11). `~/repos/clone-or-pull` builds the venvs after every pull, as `clangy` and outside the sandbox, with `uv sync --frozen` in each skill folder and each `~/forgejo` clone that has a `pyproject.toml`. After moving a skills clone, delete its `.venv` folders first: a venv holds absolute paths, and `uv sync` doesn't rewrite them. Venvs copied from another machine don't work, they point to that machine's Python. Searches and graph queries work from the prepared indexes and graphs; preparing, indexing, downloading and refreshing the mod and script listings (which need the installed game) don't work in the sandbox.
 
-The SE1 skills point server plugin developers to `se-dev-plugin-sdk`, which lives in the Magnetar repo, so `~/repos/CometWorks/magnetar/skills` is a `[[knowledge.se1]]` source linked as `knowledge/sdk`. `hidden_skills` keeps `se-dev-plugin-review` off the skill list, since it posts to GitHub.
+The SE1 skills point server plugin developers to `se-dev-plugin-sdk`, which lives in the Magnetar repo, so `~/repos/CometWorks/magnetar/skills` is a `[[knowledge.se1]]` source linked as `knowledge/sdk`. The Quasar handbook, `quasar-book`, lives in the Quasar repo the same way: `~/repos/CometWorks/quasar/skills` is linked as `knowledge/quasar`. Quasar is open source, so the handbook is not one of the private books: Clangy may quote it and link to it. `hidden_skills` keeps `se-dev-plugin-review` off the skill list, since it posts to GitHub.
 
 The clangy user's own pi loads the same skills through `skills` in `~/.pi/agent/settings.json`.
 

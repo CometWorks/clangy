@@ -10,6 +10,7 @@
 ## Dedicated servers (SE1)
 - Magnetar, the dedicated server plugin loader built on Pulsar: https://github.com/CometWorks/magnetar
 - Quasar, a supervisor and web UI that runs several Magnetar servers on one host (Linux systemd or Windows): https://github.com/CometWorks/quasar
+- Quasar admin handbook (install, servers, plugins, updates, backups, clusters, troubleshooting): https://github.com/CometWorks/quasar/blob/main/skills/quasar-book/TOC.md
 
 ## SE1 plugins
 - Templates, use "Use this template" on GitHub and follow the README:
