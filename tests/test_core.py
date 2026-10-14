@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -472,6 +473,13 @@ async def test_ticket_tools_link_thread_and_keep_files(bot, chat, config):
         {"error": ".pi/session.jsonl is neither an attachment nor in your work folder"},
     )
     assert not (workspace / "notes" / "N-0002").exists()
+    log = subprocess.run(
+        ["git", f"--git-dir={bot.store.history.git_dir}", "log", "--format=%B"], capture_output=True, text=True
+    ).stdout
+    assert (
+        f"Create DIS-0001: Crash on load\n\nDiscord user: Alice\nThread: https://discord.com/channels/{GUILD}/1015"
+        in log
+    )
 
 
 async def test_files_are_sent_once_and_retained(bot, chat, config):

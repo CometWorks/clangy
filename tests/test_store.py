@@ -1,3 +1,5 @@
+import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -107,3 +109,47 @@ def test_tickets_continue_after_the_highest_dis_number(tmp_path):
     assert store.create("ticket", "Crash", "Body", {}) == "DIS-0020"
     assert (tickets / "DIS-0020.md").read_text().startswith("---\nid: DIS-0020\n")
 
+
+def git(store: Store, *args: str) -> str:
+    return subprocess.run(
+        ["git", f"--git-dir={store.history.git_dir}", *args], check=True, capture_output=True, text=True
+    ).stdout
+
+
+def test_history_keeps_every_change_with_who_asked(tmp_path):
+    (tmp_path / "secrets.txt").write_text("not for the history")
+    store = Store(tmp_path, tmp_path / "records")
+    (tmp_path / "plans" / "P-0001.md").write_text("Written by a developer")
+    store.create("ticket", "Crash", "Body", {"thread": "https://t/1"}, by="Alice")
+    store.add_report("DIS-0001", "Again", {"thread": "https://t/2"}, by="Bob")
+    log = [entry.strip() for entry in git(store, "log", "--format=%an: %B%x00").split("\0")[:-1]]
+    assert log == [
+        "Clangy: Add a report to DIS-0001\n\nDiscord user: Bob\nThread: https://t/2",
+        "Clangy: Create DIS-0001: Crash\n\nDiscord user: Alice\nThread: https://t/1",
+        "Clangy: Changes made outside Clangy",
+        "Clangy: Changes made outside Clangy",
+    ]
+    files = git(store, "ls-tree", "-r", "--name-only", "HEAD").split()
+    assert files == ["AGENTS.md", "plans/P-0001.md", "tickets/DIS-0001.md", "tickets/Template.md"]
+    assert not (tmp_path / ".git").exists() and not (tmp_path / "tickets" / ".git").exists()
+    (tmp_path / "tickets" / "DIS-0001.md").unlink()
+    store.create("note", "A note", "Body", {})
+    assert git(store, "log", "-1", "--format=%s", "--", "tickets/DIS-0001.md") == "Changes made outside Clangy\n"
+    assert git(store, "show", "HEAD~2:tickets/DIS-0001.md").count("## Report") == 1, "the deletion can be undone"
+
+
+def test_history_is_pushed_to_its_remote(tmp_path):
+    remote = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "--quiet", "--bare", str(remote)], check=True)
+    store = Store(tmp_path / "workspace", tmp_path / "records")
+    git(store, "remote", "add", "origin", str(remote))
+    store.create("ticket", "Crash", "Body", {})
+    deadline = time.monotonic() + 10
+    while (
+        "Create DIS-0001"
+        not in subprocess.run(
+            ["git", f"--git-dir={remote}", "log", "--format=%s", "main"], capture_output=True, text=True
+        ).stdout
+    ):
+        assert time.monotonic() < deadline, "not pushed"
+        time.sleep(0.05)

@@ -9,6 +9,7 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 ├── clangy/                  working copy, replaced by every deploy; .venv with Debian's Python 3.13
 ├── clangy.toml              the config, from deploy/clangy.toml; mode 600, deploys never touch it
 ├── AGENTS.md                rules for agents working in the workspace, written once from templates/
+├── .history.git/            git history of AGENTS.md, tickets/, notes/ and plans/, see design.md, Store
 ├── tickets/                 problem reports for the developers, see design.md, Store
 │   ├── Template.md          written once from templates/
 │   ├── DIS-0001.md
