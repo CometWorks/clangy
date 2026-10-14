@@ -192,7 +192,7 @@ Sent: the agent writes files in its work folder (by convention `out/`) and calls
 Tickets, notes and plans are for the developers, so they live in a workspace laid out like the developers' own (`workspace_dir`, the `clangy` home folder on the nas) and outlive the conversations:
 
 - `AGENTS.md`: the rules for agents working in the workspace.
-- `tickets/T-0001.md`, with `Template.md`, and `completed/` and `canceled/` for the tickets developers have finished.
+- `tickets/DIS-0001.md`, with `Template.md`, and `completed/` and `canceled/` for the tickets developers have finished.
 - `notes/N-0001.md`, or `notes/N-0001/` with `NOTE.md` and files. The same for `plans/` with `PLAN.md`.
 
 The host writes `AGENTS.md` and the template from `templates/` when they are missing, and never touches them after that, so they can be edited on the host.
@@ -204,6 +204,8 @@ The agent reads `tickets/`, `notes/`, `plans/` and the records through read-only
 `files` lists attachments (`attachments/...`) and files the agent wrote, each with what it shows. Hidden files and anything else outside the work folder are refused, as are files over `attachment_max_bytes`. A ticket's files are copied into a new note, `N-0001/` with `NOTE.md` listing each file, what it shows and who posted it when; the ticket's `notes:` frontmatter names the note. A note or plan with files gets its own folder for them.
 
 `ticket_add_report` adds a repeated report of the same problem to an open ticket as a `## Report` section above `# Work log`, its files in a new note linked the same way. A report on a completed or canceled ticket is refused: if the problem came back, the agent files a new ticket naming the old one.
+
+The workspace has a git history, so a deleted or overwritten document can be brought back. Its repository is `.history.git` in the workspace root, outside anything the sandbox can see, and only the host commits to it. Every write by a host tool is a commit by Clangy that names the Discord user who asked and the thread. Edits made by hand on the host go into a separate "Changes made outside Clangy" commit before the next write, and at startup. Only `AGENTS.md`, `tickets/`, `notes/` and `plans/` are tracked, since the workspace may be a home folder. If the repository has an `origin` remote, every commit is pushed there in the background. A failed commit or push is logged and doesn't stop the write. To bring a file back: `git --git-dir=.history.git --work-tree=. checkout <commit> -- <path>`.
 
 ## Metrics
 

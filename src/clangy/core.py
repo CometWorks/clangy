@@ -997,6 +997,7 @@ class Clangy:
         meta = {"thread": conv.url}
         if conv.game:
             meta["game"] = conv.game
+        by = next((m.author for m in reversed(conv.known.values()) if not m.own), "")
         match name:
             case "set_game":
                 return self._set_game(conv, params["game"])
@@ -1004,11 +1005,13 @@ class Clangy:
                 return self._outboxes[conv.thread_id].add(params["paths"], params.get("archive"))
             case "ticket_create" | "note_create" | "plan_create":
                 files = self._kept_files(conv, params.get("files") or [])
-                doc_id = self.store.create(name.removesuffix("_create"), params["title"], params["body"], meta, files)
+                doc_id = self.store.create(
+                    name.removesuffix("_create"), params["title"], params["body"], meta, files, by
+                )
                 return f"Created {doc_id}."
             case "ticket_add_report":
                 files = self._kept_files(conv, params.get("files") or [])
-                self.store.add_report(params["id"], params["body"], meta, files)
+                self.store.add_report(params["id"], params["body"], meta, files, by)
                 return f"Added the report to {params['id']}."
         raise ToolError(f"unknown tool: {name}")
 

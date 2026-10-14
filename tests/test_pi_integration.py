@@ -33,15 +33,15 @@ async def test_pi_run_with_host_tool_and_stable_prefix(tmp_path, backend, chat):
         Reply(tool="bash", arguments={"command": "mkdir -p out && echo hi > out/notes.txt"}),
         Reply(tool="attach_files", arguments={"paths": ["out/notes.txt"]}),
         Reply(tool="ticket_create", arguments={"title": "Crash on load", "body": "Details"}),
-        Reply("Filed T-0001."),
+        Reply("Filed DIS-0001."),
         Reply("Second answer."),
     ]
     await bot.on_message(forum_post(SUPPORT, 2000, "My game crashes"))
     await bot.wait_idle()
     first_reply = chat.in_channel(2000)[0]
-    assert first_reply.current == f"Filed T-0001.\n\n{text.footer('Clangy')}"
+    assert first_reply.current == f"Filed DIS-0001.\n\n{text.footer('Clangy')}"
     assert first_reply.files == [b"hi\n"]
-    assert (tmp_path / "workspace" / "tickets" / "T-0001.md").exists()
+    assert (tmp_path / "workspace" / "tickets" / "DIS-0001.md").exists()
     run = json.loads((bot.conversation_dir(2000) / "metrics.jsonl").read_text().splitlines()[0])
     assert run["tools"] == ["bash", "attach_files", "ticket_create"] and run["steps"] == 4
     assert len(run["requests"]) == 4 and run["prompt_tokens"] == 400

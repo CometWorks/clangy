@@ -1,19 +1,28 @@
 """Clangy's workspace of tickets, notes and plans, and the records of record-mode threads. Written only by the host."""
 
+import logging
 import os
 import re
 import shutil
+import subprocess
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-KINDS = {"ticket": ("tickets", "T", ""), "note": ("notes", "N", "NOTE.md"), "plan": ("plans", "P", "PLAN.md")}
+KINDS = {"ticket": ("tickets", "DIS", ""), "note": ("notes", "N", "NOTE.md"), "plan": ("plans", "P", "PLAN.md")}
 """Folder, id prefix, and the main file of a document that has its own folder for its files."""
 CLOSED = ("completed", "canceled")
 """Subfolders of tickets that developers move finished tickets to."""
 TEMPLATES = Path(__file__).parent / "templates"
 TITLE_MAX = 120
 BODY_MAX = 20000
-ID_RE = re.compile(r"^[TNP]-\d{4}$")
+ID_RE = re.compile(r"^(DIS|N|P)-\d{4}$")
+HISTORY = ".history.git"
+"""The workspace's git repository, in its root, which the sandbox can't see. Only the host commits."""
+TRACKED = "/*\n!/AGENTS.md\n!/tickets/\n!/notes/\n!/plans/\n*.tmp\n"
+"""Ignore rules of the history: the workspace root may be a home folder."""
+
+log = logging.getLogger(__name__)
 
 KeptFile = tuple[Path, str]
 """A file to keep with a document, and its line in the list of files."""
@@ -51,6 +60,60 @@ def _replace(path: Path, text: str) -> None:
     tmp.replace(path)
 
 
+class History:
+    """Git history of the workspace, so a lost or overwritten document can be brought back.
+
+    The repository has no .git in the work tree and lives where the sandbox can't read or write it. After every
+    commit it is pushed to its `origin` remote, if one is set up.
+    """
+
+    def __init__(self, work_tree: Path):
+        self.work_tree = work_tree
+        self.git_dir = work_tree / HISTORY
+        self._lock = threading.Lock()
+        self._push_lock = threading.Lock()
+        """Pushes have their own lock: a slow one must not hold up commits, which run on the event loop."""
+
+    def commit(self, message: str) -> None:
+        """Commits every change to the workspace; a failure is logged, the document is written anyway."""
+        try:
+            with self._lock:
+                if not (self.git_dir / "HEAD").exists():
+                    self._git("init", "--quiet", "--bare", "--initial-branch=main", str(self.git_dir), init=True)
+                (self.git_dir / "info").mkdir(exist_ok=True)
+                (self.git_dir / "info" / "exclude").write_text(TRACKED)
+                self._git("add", "--all")
+                if self._git("diff", "--cached", "--quiet", check=False).returncode == 0:
+                    return
+                self._git("commit", "--quiet", "--message", message)
+                pushed = bool(self._git("remote").stdout.strip())
+        except (OSError, subprocess.SubprocessError) as e:
+            log.error("History commit failed: %s %s", e, getattr(e, "stderr", "") or "")
+            return
+        if pushed:
+            threading.Thread(target=self._push, daemon=True).start()
+
+    def _push(self) -> None:
+        try:
+            with self._push_lock:
+                self._git("push", "--quiet", "origin", "main", timeout=120)
+        except (OSError, subprocess.SubprocessError) as e:
+            log.error("History push failed: %s %s", e, getattr(e, "stderr", "") or "")
+
+    def _git(
+        self, *args: str, check: bool = True, init: bool = False, timeout: float = 60
+    ) -> subprocess.CompletedProcess:
+        where = [] if init else [f"--git-dir={self.git_dir}", f"--work-tree={self.work_tree}"]
+        settings = [
+            "user.name=Clangy",
+            "user.email=clangy@localhost",
+            "commit.gpgsign=false",
+            "core.hooksPath=/dev/null",
+        ]
+        command = ["git", *where, *(a for s in settings for a in ("-c", s)), *args]
+        return subprocess.run(command, cwd=self.work_tree, check=check, capture_output=True, text=True, timeout=timeout)
+
+
 class Store:
     def __init__(self, root: Path, records: Path):
         self.root = root
@@ -64,23 +127,33 @@ class Store:
         for source, target in (("agents.md", "AGENTS.md"), ("ticket.md", "tickets/Template.md")):
             if not (root / target).exists():
                 shutil.copyfile(TEMPLATES / source, root / target)
+        self.history = History(root)
+        self.history.commit("Changes made outside Clangy")
 
-    def create(self, kind: str, title: str, body: str, meta: dict[str, str], files: list[KeptFile] = ()) -> str:
+    def create(
+        self, kind: str, title: str, body: str, meta: dict[str, str], files: list[KeptFile] = (), by: str = ""
+    ) -> str:
         """Writes a new document with the next free number and returns its id.
 
         A note or plan with files gets its own folder for them. A ticket's files go into a new note it links to.
+        `by` is the user who asked for it, for the history.
         """
         title, body = _check_text(title, body)
+        self.history.commit("Changes made outside Clangy")
         if kind != "ticket":
-            return self._write(kind, title, body, meta, files)
-        ticket_id = self._write(kind, title, f"# Description\n\n{body}\n\n# Work log", meta)
-        if files:
-            self._files_note(ticket_id, meta, files)
-        return ticket_id
+            doc_id = self._write(kind, title, body, meta, files)
+        else:
+            doc_id = self._write(kind, title, f"# Description\n\n{body}\n\n# Work log", meta)
+            if files:
+                self._files_note(doc_id, meta, files)
+        self.history.commit(_message(f"Create {doc_id}: {title}", by, meta))
+        return doc_id
 
-    def add_report(self, ticket_id: str, body: str, meta: dict[str, str], files: list[KeptFile] = ()) -> None:
+    def add_report(
+        self, ticket_id: str, body: str, meta: dict[str, str], files: list[KeptFile] = (), by: str = ""
+    ) -> None:
         """Adds a repeated report of the same problem to an open ticket, above the work log."""
-        if not ID_RE.match(ticket_id) or not ticket_id.startswith("T-"):
+        if not ID_RE.match(ticket_id) or not ticket_id.startswith("DIS-"):
             raise StoreError(f"not a ticket id: {ticket_id}")
         tickets = self.root / "tickets"
         path = tickets / f"{ticket_id}.md"
@@ -92,6 +165,8 @@ class Store:
                     )
             raise StoreError(f"no such ticket: {ticket_id}")
         _, body = _check_text("report", body)
+        self.history.commit("Changes made outside Clangy")
+        message = _message(f"Add a report to {ticket_id}", by, meta)
         meta = {"added": _now(), **meta}
         if files:
             meta["notes"] = self._files_note(ticket_id, meta, files)
@@ -100,6 +175,7 @@ class Store:
         text = path.read_text()
         at = text.find("\n# Work log")
         _replace(path, text.rstrip("\n") + "\n\n" + report if at < 0 else text[: at + 1] + report + text[at + 1 :])
+        self.history.commit(message)
 
     def append_record(self, thread_id: int, title: str, url: str, entry: str) -> None:
         """Records a message of a record-mode forum thread for later recall."""
@@ -130,7 +206,8 @@ class Store:
         folder, prefix, main = KINDS[kind]
         directory = self.root / folder
         searched = [directory, *(directory / c for c in CLOSED if kind == "ticket")]
-        taken = (p.name[2:6] for d in searched for p in d.glob(f"{prefix}-[0-9][0-9][0-9][0-9]*"))
+        start = len(prefix) + 1
+        taken = (p.name[start : start + 4] for d in searched for p in d.glob(f"{prefix}-[0-9][0-9][0-9][0-9]*"))
         number = 1 + max((int(n) for n in taken), default=0)
         if files:
             body += "\n\n# Files\n\n" + "".join(f"- `{target}`: {line}\n" for target, line in _targets(files))
@@ -162,6 +239,12 @@ class Store:
             with os.fdopen(fd, "w") as f:
                 f.write(text)
             return doc_id
+
+
+def _message(subject: str, by: str, meta: dict[str, str]) -> str:
+    details = [f"Discord user: {by}"] if by else []
+    details += [f"Thread: {meta['thread']}"] if "thread" in meta else []
+    return "\n\n".join([subject, "\n".join(details)]) if details else subject
 
 
 def _targets(files: list[KeptFile]) -> list[tuple[str, str]]:

@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -437,7 +438,7 @@ async def test_ticket_tools_link_thread_and_keep_files(bot, chat, config):
 
     bot.agent.script = [
         analyze,
-        tool("ticket_add_report", {"id": "T-0001", "body": "Again"}, answer("Added.")),
+        tool("ticket_add_report", {"id": "DIS-0001", "body": "Again"}, answer("Added.")),
         tool("ticket_create", {"title": "", "body": "x"}, answer("Oops.")),
         tool(
             "note_create",
@@ -453,25 +454,32 @@ async def test_ticket_tools_link_thread_and_keep_files(bot, chat, config):
     assert "[host] Attachment from Alice: attachments/1015-info.log (1 KB)" in bot.agent.prompts[0]
     workspace = config.data_dir / "workspace"
     assert (work / "store" / "tickets").resolve() == (workspace / "tickets").resolve()
-    ticket = (workspace / "tickets" / "T-0001.md").read_text()
+    ticket = (workspace / "tickets" / "DIS-0001.md").read_text()
     assert f"thread: https://discord.com/channels/{GUILD}/1015\n" in ticket
     assert "game: se1\n" in ticket and "notes: N-0001\n" in ticket and "files:" not in ticket
     note = workspace / "notes" / "N-0001"
     assert (note / "1015-info.log").read_bytes() == b"log data" and (note / "plot.png").read_bytes() == b"png"
     listing = (note / "NOTE.md").read_text()
-    assert "ticket: T-0001\n" in listing
+    assert "ticket: DIS-0001\n" in listing
     assert "- `1015-info.log`: Pulsar log (posted by Alice, " in listing
     assert "- `plot.png`: Frame times (written by Clangy)" in listing
     for prompt in ("@Clangy same", "@Clangy bad", "@Clangy leak"):
         await bot.on_message(message(1015, prompt, parent_id=SE1_FORUM, mentions_bot=True))
         await bot.wait_idle()
-    assert bot.agent.tool_results[1] == (200, {"text": "Added the report to T-0001."})
+    assert bot.agent.tool_results[1] == (200, {"text": "Added the report to DIS-0001."})
     assert bot.agent.tool_results[2] == (400, {"error": "title is empty"})
     assert bot.agent.tool_results[3] == (
         400,
         {"error": ".pi/session.jsonl is neither an attachment nor in your work folder"},
     )
     assert not (workspace / "notes" / "N-0002").exists()
+    log = subprocess.run(
+        ["git", f"--git-dir={bot.store.history.git_dir}", "log", "--format=%B"], capture_output=True, text=True
+    ).stdout
+    assert (
+        f"Create DIS-0001: Crash on load\n\nDiscord user: Alice\nThread: https://discord.com/channels/{GUILD}/1015"
+        in log
+    )
 
 
 async def test_files_are_sent_once_and_retained(bot, chat, config):
