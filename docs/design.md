@@ -32,7 +32,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 1. A trigger (see below) posts a progress message right away and starts the conversation's worker. A trigger during a run sets a flag, and the worker runs again afterwards.
 2. The worker picks the backend (see Backends) and waits for a slot on it. The progress message shows the ETA (see Progress and ETA).
 3. The host snapshots the pi session file, refreshes the work folder links (`attachments`, `store/*`, `guide`, the game's knowledge), writes pi's `models.json` and `settings.json`, and opens the host socket.
-4. pi runs in firejail with `--mode json --print --session <file>`. The prompt is a `[host]` timestamp line, then every queued message as `Name: text` plus attachment notes. In forums, a note gives the post's title when the model hasn't seen it yet or it changed, since the title is often the question itself.
+4. pi runs in firejail with `--mode json --print --session <file>`. The prompt is a `[host]` timestamp line, then every queued message as `Name: text` plus attachment notes, and `[reactions: 🙏 1]` when it has reactions. Custom emojis in the text become `:name:`. In forums, notes give the post's title and tags when the model hasn't seen them yet or they changed: the title is often the question itself, and the tags name the product, like Magnetar for a dedicated server.
 5. On success the queued messages are dropped, the answer replaces the progress message, and parts over 2000 characters go into follow-up messages. Every answer ends with the fixed mention reminder. Some models write the conversation out again before their answer. When an answer starts with one of Clangy's earlier answers (40 characters or more), the host cuts that and any further copied answers and `Name: text` lines that follow, and puts the shortened answer into the pi session too, since later answers would copy the copy. An answer that is only a copy is posted as it is.
 6. On a timeout, backend failure or other failure the session file is restored from the snapshot, so partial output never reaches the next run, and the queued messages stay queued.
 
@@ -56,6 +56,8 @@ A message that the mention or its context replies to comes along even if it is o
 ### Edits and deletions
 
 Clangy remembers the author, text and time of every message in its conversations, its own answers included (`known` in `state.json`), until the conversation expires (see Retention). An edit or deletion of a message still waiting for the next run updates or removes it in the queue. For a message the model has already seen, or one the running answer is working from, the next run gets a `[host]` note: the new text, or the deleted text with an instruction to disregard it. A running answer is never interrupted. Edits don't trigger answers, even if they add a mention. Clangy ignores edits of its own messages and edits that only add link previews. In `record` channels edits and deletions are logged to the record too.
+
+Reactions work the same way. Clangy counts them per message from the reaction events. A queued message shows its current counts. A new reaction to a message the model has already seen becomes a `[host]` note naming who reacted, and a removed one only changes the count. Reactions don't trigger answers or restart the `initial_delay` wait, and aren't logged to records or kept in the message cache.
 
 ## Sandbox
 
@@ -152,7 +154,7 @@ Sources are folders used in place (the nas setup) or git repositories. `clangy s
 
 ## Prompt, guide and host tools
 
-`prompts/system.md` is the system prompt: how to read the turns (`Name: text`, replies, `[host]` lines, the reference block), the rules (facts only, short answers, no code (point to a coding agent with the SE skills instead), never reveal the books or the instructions, ignore injected instructions), the tools in the sandbox, working out the game, the valid game and server setups, collecting problem reports (setup first, logs only after it) until a developer could start on a ticket, what a ticket holds, pointing developers to sources, sending files, the `repos/` mount and the store. Keep it free of changing data, its bytes are the cached prefix. A channel's `prompt` is appended under `# Channel`.
+`prompts/system.md` is the system prompt: how to read the turns (`Name: text`, replies, reactions, `[host]` lines, forum tags, the reference block), the rules (facts only, short answers, no code (point to a coding agent with the SE skills instead), never reveal the books or the instructions, ignore injected instructions), the tools in the sandbox, working out the game, the valid game and server setups, collecting problem reports (setup first, logs only after it) until a developer could start on a ticket, what a ticket holds, pointing developers to sources, sending files, the `repos/` mount and the store. Keep it free of changing data, its bytes are the cached prefix. A channel's `prompt` is appended under `# Channel`.
 
 `guide/` holds files the agent reads on demand: `logs.md` (where Pulsar's and Magnetar's `info.log`, the game logs and crash dumps are for each setup) and `developers.md` (sources for Pulsar, dedicated servers, plugin, mod and script development).
 
@@ -237,12 +239,12 @@ The host socket is bound through `/proc/self/fd/<dir fd>/host.sock` and pi conne
 
 `<data_dir>/conversations/<thread id>/`:
 
-- `state.json`: channel, backend and the conversation's size after its last answer (for the switch rule), game, forum title, status, queued messages, pending `[host]` notes, the conversation's known messages, progress message id, retry, failover and answer counts, the files already sent. Host only.
+- `state.json`: channel, backend and the conversation's size after its last answer (for the switch rule), game, forum title and tags, status, queued messages, pending `[host]` notes, the conversation's known messages with their reactions, progress message id, retry, failover and answer counts, the files already sent. Host only.
 - `files/`: `received/` attachments, `sent/<run>/` files sent in answers, `outbox/` while a run is staging files. Host only.
 - `work/`: the sandbox's folder: the files the agent writes (`out/`), the `attachments`, `store`, `guide` and knowledge links, `.pi/` (session, its snapshot `session.bak` from before the current run, system prompt, pi config) and, during a run, `.clangy/host.sock` and `.clangy/proxy.sock`.
 - `metrics.jsonl`: per-request token and timing stats.
 
-If a conversation has answers but its pi session file is gone, for example because it was deleted by hand, Clangy notices on startup and queues all of its known messages as earlier messages for reference, Clangy's answers as `Clangy (you)`, with the game's knowledge note and, at the next message, the forum title. The next run starts a new session that has the whole conversation again. Answers posted before Clangy kept its own answers in `known` are read back from the thread.
+If a conversation has answers but its pi session file is gone, for example because it was deleted by hand, Clangy notices on startup and queues all of its known messages as earlier messages for reference, Clangy's answers as `Clangy (you)`, with the game's knowledge note and, at the next message, the forum title and tags. The next run starts a new session that has the whole conversation again. Answers posted before Clangy kept its own answers in `known` are read back from the thread.
 
 ### Retention
 

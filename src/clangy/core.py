@@ -74,6 +74,7 @@ class PendingMessage(BaseModel):
     """Author of the message this one replies to."""
     own: bool = False
     """Clangy's earlier answer, read back from the thread."""
+    reactions: dict[str, int] = Field(default_factory=dict)
 
 
 class KnownMessage(BaseModel):
@@ -85,6 +86,7 @@ class KnownMessage(BaseModel):
     created: datetime
     own: bool = False
     """A part of Clangy's answer, without the footer."""
+    reactions: dict[str, int] = Field(default_factory=dict)
 
 
 Status = Literal["idle", "queued", "running", "backend_error", "failed"]
@@ -113,6 +115,8 @@ class Conversation(BaseModel):
     """Work folder paths of the files already sent, each file goes out at most once."""
     title: str = ""
     """The forum post's title as last told to the model."""
+    tags: list[str] = Field(default_factory=list)
+    """The forum post's tags as last told to the model."""
 
     @property
     def key(self) -> str:
@@ -333,11 +337,14 @@ class Clangy:
                     attachments=[f"attachments/{f.name} ({human_size(f.stat().st_size)})" for f in files],
                     reference=True,
                     own=known.own,
+                    reactions=known.reactions,
                 )
             )
         if conv.game and not any(n.startswith(knowledge_note_start(conv.game)) for n in conv.host_notes):
             conv.host_notes.append(self._knowledge_note(conv.game))
-        conv.title = ""  # The next message in a forum tells the title again
+        # The next message in a forum tells the title and tags again
+        conv.title = ""
+        conv.tags = []
 
     # Incoming messages
 
@@ -359,11 +366,8 @@ class Clangy:
             return
         if not new:
             await self._read_missed(conv, channel, msg)
-        if channel.mode != "mention" and msg.thread_name and msg.thread_name != conv.title:
-            # A forum post's title is often the question itself
-            renamed = " is now" if conv.title else ""
-            conv.host_notes.append(f"[host] The title of the forum post{renamed}: {msg.thread_name}")
-            conv.title = msg.thread_name
+        if channel.mode != "mention":
+            self._note_post_changes(conv, msg)
         await self._add_message(conv, channel, msg)
         if msg.mentions_bot:
             self._cancel_first_answer(conv)
@@ -372,6 +376,25 @@ class Clangy:
         elif new and channel.initial_response or conv.thread_id in self._first_answer:
             self._schedule_first_answer(conv, channel.initial_delay)
         self.save(conv)
+
+    @staticmethod
+    def _note_post_changes(conv: Conversation, msg: IncomingMessage) -> None:
+        """Tells the model a forum post's title and tags, and again when they change."""
+        if msg.thread_name and msg.thread_name != conv.title:
+            # A forum post's title is often the question itself
+            renamed = " is now" if conv.title else ""
+            conv.host_notes.append(f"[host] The title of the forum post{renamed}: {msg.thread_name}")
+            conv.title = msg.thread_name
+        if msg.thread_tags != conv.tags:
+            # The tags often name the product, e.g. Magnetar for a dedicated server
+            changed = " are now" if conv.tags else ""
+            tags = ", ".join(msg.thread_tags)
+            conv.host_notes.append(
+                f"[host] The tags of the forum post{changed}: {tags}"
+                if tags
+                else "[host] The forum post has no tags now."
+            )
+            conv.tags = msg.thread_tags
 
     async def _start_conversation(self, msg: IncomingMessage) -> Conversation | None:
         """Starts a conversation for new forum posts and for mentions in mention-mode channels."""
@@ -488,7 +511,9 @@ class Clangy:
         if channel.mode == "record" and not reference:
             files = "".join(f"\n- attachment: {a.filename}" for a in msg.attachments)
             self._record(conv, msg.author, msg.created, msg.text + files, msg.thread_name)
-        conv.known[msg.id] = KnownMessage(author=msg.author, text=msg.text, created=msg.created, own=msg.from_self)
+        conv.known[msg.id] = KnownMessage(
+            author=msg.author, text=msg.text, created=msg.created, own=msg.from_self, reactions=msg.reactions
+        )
         self._message_threads[msg.id] = conv.thread_id
         pending = await self._pending(conv, msg)
         pending.reference = reference
@@ -560,6 +585,27 @@ class Clangy:
             )
         self._after_change(conv, known, f"deleted their message from {known.created:%Y-%m-%d %H:%M} UTC")
 
+    def on_reaction(self, message_id: int, emoji: str, change: int, user: str) -> None:
+        """Counts a reaction added (+1) or removed (-1). A new reaction to a message the model has already seen becomes
+        a note; a queued message shows its reactions."""
+        conv = self.conversations.get(self._message_threads.get(message_id, 0))
+        known = conv.known.get(message_id) if conv else None
+        if conv is None or known is None:
+            return
+        count = known.reactions.get(emoji, 0) + change
+        if count > 0:
+            known.reactions[emoji] = count
+        else:
+            known.reactions.pop(emoji, None)
+        if queued := self._queued(conv, message_id):
+            queued.reactions = known.reactions.copy()
+        elif change > 0:
+            whose = "your" if known.own else f"{known.author}'s"
+            conv.host_notes.append(
+                f"[host] {user} reacted with {emoji} to {whose} message from {known.created:%Y-%m-%d %H:%M} UTC."
+            )
+        self.save(conv)
+
     def _after_change(self, conv: Conversation, known: KnownMessage, record: str) -> None:
         channel = self.config.channel(conv.channel_id)
         if channel is not None and channel.mode == "record":
@@ -603,6 +649,7 @@ class Clangy:
             attachments=notes,
             reply_to_author=replied,
             own=msg.from_self,
+            reactions=msg.reactions,
         )
 
     def _record(self, conv: Conversation, author: str, when: datetime, text: str, title: str = "") -> None:
@@ -852,7 +899,8 @@ class Clangy:
         lines = []
         for m in messages:
             note = " (you)" if m.own else f" (reply to {m.reply_to_author})" if m.reply_to_author else ""
-            lines.append(f"{m.author}{note}: {m.text}")
+            reactions = ", ".join(f"{emoji} {count}" for emoji, count in m.reactions.items())
+            lines.append(f"{m.author}{note}: {m.text}" + (f" [reactions: {reactions}]" if reactions else ""))
             lines += [f"[host] Attachment from {m.author}: {a}" for a in m.attachments]
         return lines
 

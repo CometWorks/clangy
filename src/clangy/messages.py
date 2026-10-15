@@ -29,6 +29,10 @@ class IncomingMessage:
     starts_thread: bool = False
     """First message of a forum post."""
     thread_name: str = ""
+    thread_tags: list[str] = field(default_factory=list)
+    """Names of the tags applied to the forum post."""
     attachments: list[Attachment] = field(default_factory=list)
+    reactions: dict[str, int] = field(default_factory=dict)
+    """Count of each reaction emoji, custom ones as `:name:`."""
     replied_to: "IncomingMessage | None" = None
     """The message this one replies to; a thread started from a channel message points to that message."""
