@@ -103,6 +103,9 @@ class Conversation(BaseModel):
     pending: list[PendingMessage] = Field(default_factory=list)
     progress_message_id: int | None = None
     retries: int = 0
+    """Runs after waiting for a backend, since the last mention or answer."""
+    fallovers: int = 0
+    """Runs moved to another backend right after a failure, since the last retry, mention or answer."""
     runs: int = 0
     host_notes: list[str] = Field(default_factory=list)
     known: dict[int, KnownMessage] = Field(default_factory=dict)
@@ -364,7 +367,7 @@ class Clangy:
         await self._add_message(conv, channel, msg)
         if msg.mentions_bot:
             self._cancel_first_answer(conv)
-            conv.retries = 0
+            conv.retries = conv.fallovers = 0
             self.trigger(conv)
         elif new and channel.initial_response or conv.thread_id in self._first_answer:
             self._schedule_first_answer(conv, channel.initial_delay)
@@ -640,9 +643,7 @@ class Clangy:
         prompt_tokens = len(prompt) // 4 + (FIRST_RUN_TOKENS if first_run else 0)
         backend, reason = await self._choose_backend(conv, prompt_tokens)
         if backend is None:
-            conv.status = "backend_error"
-            await self._show(conv, text.backend_lost(conv.retries, self.config.max_retries))
-            self.save(conv)
+            await self._wait_for_backend(conv)
             return
         timing: dict = {}
         if reason:
@@ -757,7 +758,7 @@ class Clangy:
             conv.pending = [m for m in conv.pending if m.id not in consumed]
             conv.host_notes = [n for n in conv.host_notes if n not in delivered]
             conv.status = "idle"
-            conv.retries = 0
+            conv.retries = conv.fallovers = 0
             conv.runs += 1
             backend.mark_ok()
             if last := next((r for r in reversed(stats.per_request) if r.get("prompt_tokens")), None):
@@ -772,23 +773,30 @@ class Clangy:
         if stats.backend_failed:
             now = time.monotonic()
             backend.mark_failed(now, stats.retry_after)
-            if conv.retries >= self.config.max_retries:
-                conv.status = "failed"
-                message = text.backend_gave_up(bot)
+            if conv.fallovers < len(self.backends) - 1 and any(b.available(now) for b in self.backends.values()):
+                # Another backend takes over right away, even though it has to read the whole conversation. Users
+                # see no warning, the next run updates the progress message.
+                conv.fallovers += 1
+                self.save(conv)
+                self.trigger(conv)
             else:
-                conv.status = "backend_error"
-                message = text.backend_lost(conv.retries, self.config.max_retries)
-                if any(b.available(now) for b in self.backends.values()):
-                    # Another backend takes over right away, even though it has to read the whole conversation
-                    conv.retries += 1
-                    self.trigger(conv)
-        else:
-            log.warning("Run failed for conversation %s: %s", conv.thread_id, result.error or "timeout")
-            conv.status = "idle"
-            message = text.timed_out(bot) if result.timed_out else text.failed(bot)
-        await self._show(conv, message)
-        if conv.status != "backend_error":
+                await self._wait_for_backend(conv)
+            return
+        log.warning("Run failed for conversation %s: %s", conv.thread_id, result.error or "timeout")
+        conv.status = "idle"
+        await self._show(conv, text.timed_out(bot) if result.timed_out else text.failed(bot))
+        conv.progress_message_id = None
+        self.save(conv)
+
+    async def _wait_for_backend(self, conv: Conversation) -> None:
+        """Leaves the conversation to retry_failed, or gives up after max_retries."""
+        if conv.retries >= self.config.max_retries:
+            conv.status = "failed"
+            await self._show(conv, text.backend_gave_up(self.chat.bot_name))
             conv.progress_message_id = None
+        else:
+            conv.status = "backend_error"
+            await self._show(conv, text.backend_lost(conv.retries + 1, self.config.max_retries))
         self.save(conv)
 
     async def _execute(
@@ -1159,5 +1167,6 @@ class Clangy:
             if conv.thread_id in self._workers and not self._workers[conv.thread_id].done():
                 continue
             conv.retries += 1
+            conv.fallovers = 0
             self.save(conv)
             self.trigger(conv)

@@ -289,7 +289,7 @@ async def test_backend_loss_retries_three_times_then_gives_up(bot, chat, backend
     await bot.wait_idle()
     conv = bot.conversations[1009]
     [progress] = chat.in_channel(1009)
-    assert conv.status == "backend_error" and "retry 0/3" in progress.current
+    assert conv.status == "backend_error" and "retry 1/3" in progress.current
     assert len(conv.pending) == 1 and not bot.agent.specs[0].paths.session.exists()
 
     for attempt in (1, 2, 3):
@@ -1005,7 +1005,8 @@ async def test_failover_answers_right_away_from_another_backend(duo, chat, backe
     assert conv.backend == "cloud" and conv.status == "idle" and conv.pending == []
     [progress] = chat.in_channel(1100)
     assert progress.current.startswith("Default answer.")
-    assert any("retry 1/3" in edit for edit in progress.edits)
+    assert not any("retry" in edit or "Lost" in edit for edit in progress.edits), "no warning"
+    assert conv.retries == conv.fallovers == 0
     first, second = metrics(duo, 1100)
     assert first["backend"] == "local" and first["backend_switch"] == {"from": None, "reason": "new"}
     assert first["backend_failed"] and not first["ok"]
@@ -1025,7 +1026,7 @@ async def test_failed_backends_wait_for_health_or_cooldown(duo, chat, backend, b
     await duo.on_message(message(1101, "@Clangy more", parent_id=SUPPORT, mentions_bot=True))
     await duo.wait_idle()
     conv = duo.conversations[1101]
-    assert conv.status == "backend_error" and "retry 0/3" in chat.in_channel(1101)[-1].current
+    assert conv.status == "backend_error" and "retry 1/3" in chat.in_channel(1101)[-1].current
     assert len(backend.requests) == 1, "no request to local before its health check"
 
     await duo.retry_failed()
@@ -1036,6 +1037,25 @@ async def test_failed_backends_wait_for_health_or_cooldown(duo, chat, backend, b
     assert duo.backends["local"].failures == 0, "reset by the answer"
     assert duo.backends["cloud"].failures == 1
     assert metrics(duo, 1101)[-1]["backend_switch"] == {"from": "cloud", "reason": "failure"}
+
+
+async def test_fallovers_stop_after_trying_every_other_backend(duo, chat, backend, backend2):
+    # The cloud's cooldown ends right away, so only the limit stops it falling over to itself again
+    duo.backends["cloud"].config.cooldown = 0
+    backend.status = backend2.status = 503
+    await duo.on_message(forum_post(SUPPORT, 1102, "Crash"))
+    await duo.wait_idle()
+    conv = duo.conversations[1102]
+    assert len(duo.agent.specs) == 2
+    assert conv.status == "backend_error" and conv.retries == 0 and conv.fallovers == 1
+    [progress] = chat.in_channel(1102)
+    assert "retry 1/3" in progress.current
+
+    backend2.status = 200
+    await duo.retry_failed()
+    await duo.wait_idle()
+    assert conv.status == "idle" and progress.current.startswith("Default answer.")
+    assert conv.retries == conv.fallovers == 0
 
 
 async def test_new_conversations_go_where_the_answer_comes_first(duo):
