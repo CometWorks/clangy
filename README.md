@@ -15,7 +15,7 @@ uv run clangy run                    # token in config.toml or DISCORD_TOKEN
 
 ## Docs
 
-- [Design](docs/design.md): how a run works, sandbox, prompt caching, backends and failover, knowledge, tools, metrics, data retention
+- [Design](docs/design.md): how a run works, sandbox, prompt caching, backends and failover, knowledge, tools, posts from the developers, metrics, data retention
 - [Configuration](docs/configuration.md)
 - [Deployment](docs/deployment.md): systemd service on the nas, `deploy/deploy.sh`, commands
 - [Testing](docs/testing.md)

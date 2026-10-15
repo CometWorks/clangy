@@ -65,6 +65,10 @@ class DiscordChat:
         except discord.HTTPException as e:
             raise HistoryUnavailable(f"can't read the history of channel {channel_id}: {e}") from e
 
+    async def thread_parent(self, thread_id: int) -> int | None:
+        channel = self.client.get_channel(thread_id) or await self.client.fetch_channel(thread_id)
+        return channel.parent_id if isinstance(channel, discord.Thread) else None
+
     async def download(self, attachment: Attachment, path: Path) -> None:
         size = 0
         async with self.http.get(attachment.url) as response:
@@ -130,6 +134,7 @@ class ClangyClient(discord.Client):
         self.core = Clangy(self.config, DiscordChat(self, http, self.config.attachment_max_bytes))
         await self.core.load()
         self.loop.create_task(self.core.monitor_backends())
+        self.loop.create_task(self.core.watch_outbox())
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s", self.user)

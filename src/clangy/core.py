@@ -25,7 +25,7 @@ from clangy.files import FileError, Outbox, safe_filename
 from clangy.messages import Attachment, IncomingMessage
 from clangy.proxy import HostServer, ProxyRun, RunStats, TcpRelay, ToolError
 from clangy.runner import PACKAGE_DIR, RunPaths, RunResult, RunSpec, free_port, replace_answer, run_pi, write_pi_config
-from clangy.store import KeptFile, Store, StoreError
+from clangy.store import KeptFile, Store, StoreError, document, frontmatter, utc_now, write_file
 
 log = logging.getLogger(__name__)
 
@@ -37,10 +37,16 @@ ANSWER_TOKENS = 500
 FIRST_RUN_TOKENS = 3000
 """System prompt and tool definitions, processed only on the first run of a conversation."""
 CACHE_AGE = timedelta(days=2)
+OUTBOX_INTERVAL = 10.0
+"""Seconds between looks into the outbox."""
 
 
 class HistoryUnavailable(RuntimeError):
     """The chat before a mention can't be read, so there's no context to answer from."""
+
+
+class PostRefused(ValueError):
+    """A message in the outbox that Clangy won't post."""
 
 
 class Chat(Protocol):
@@ -60,6 +66,10 @@ class Chat(Protocol):
         ...
 
     async def download(self, attachment: Attachment, path: Path) -> None: ...
+
+    async def thread_parent(self, thread_id: int) -> int | None:
+        """The channel a thread is in, None if the id isn't a thread."""
+        ...
 
 
 class PendingMessage(BaseModel):
@@ -1218,3 +1228,91 @@ class Clangy:
             conv.failovers = 0
             self.save(conv)
             self.trigger(conv)
+
+    # Messages from the developers
+
+    @property
+    def outbox(self) -> Path:
+        return self.config.data_dir / "outbox"
+
+    async def watch_outbox(self) -> None:
+        while True:
+            try:
+                await self.send_posts()
+            except Exception:
+                log.exception("Failed to read the outbox")
+            await asyncio.sleep(OUTBOX_INTERVAL)
+
+    async def send_posts(self) -> None:
+        """Posts the messages queued in the outbox, each at most once. A posted one goes to sent/, with the message
+        link; one refused or failed goes to failed/, with the error."""
+        for folder in ("sent", "failed"):
+            (self.outbox / folder).mkdir(parents=True, exist_ok=True)
+        for path in sorted(self.outbox.glob("*.md")):
+            meta, body = frontmatter(path.read_text())
+            try:
+                await self._send_post(path.stem, meta, body)
+            except Exception as e:  # Whatever went wrong, a person decides about it
+                log.warning("Not posted: %s: %s", path.name, e)
+                write_file(self.outbox / "failed" / path.name, document({**meta, "error": str(e)}, body))
+            path.unlink()
+
+    async def _send_post(self, name: str, meta: dict[str, str], body: str) -> None:
+        ticket_ids, url = self._post_thread(meta.get("to", "").strip())
+        thread_id = int(url.rsplit("/", 1)[-1])
+        parent = await self.chat.thread_parent(thread_id)
+        if parent is None or self.config.channel(parent) is None:
+            raise PostRefused(f"thread {thread_id} is not in a channel Clangy monitors")
+        footer = text.footer(self.chat.bot_name)
+        if not body:
+            raise PostRefused("the message is empty")
+        if len(body) + 2 + len(footer) > text.LIMIT:
+            raise PostRefused(f"the message is over {text.LIMIT - 2 - len(footer)} characters")
+        # The claim in sent/ comes first: a post cut short by a restart is never posted again
+        sent = self.outbox / "sent" / f"{name}.md"
+        meta = {**meta, "thread": url, "sending": utc_now()}
+        try:
+            with open(sent, "x") as f:
+                f.write(document(meta, body))
+        except FileExistsError:
+            raise PostRefused(f"sent/{name}.md exists, it was posted before") from None
+        try:
+            message_id = await self.chat.send(thread_id, f"{body}\n\n{footer}")
+        except Exception:
+            sent.unlink()
+            raise
+        link = f"{url}/{message_id}"
+        write_file(sent, document({**meta, "posted": utc_now(), "message": link}, body))
+        log.info("Posted %s in thread %s", name, thread_id)
+        if conv := self.conversations.get(thread_id):
+            # Like an answer, so edits are noticed and a lost session gets it back; the note tells the model
+            conv.known[message_id] = KnownMessage(
+                author=self.chat.bot_name, text=body, created=datetime.now(timezone.utc), own=True
+            )
+            self._message_threads[message_id] = thread_id
+            about = f" about {', '.join(ticket_ids)}" if ticket_ids else ""
+            conv.host_notes.append(f"[host] A developer had you post this in the thread{about}: {body}")
+            self.save(conv)
+        for ticket_id in ticket_ids:
+            line = f"{utc_now()}: Clangy posted {name} from the outbox in the thread: {link}"
+            self.store.log_work(ticket_id, line, f"Post {name} in the thread of {ticket_id}", {"thread": url})
+
+    def _post_thread(self, to: str) -> tuple[list[str], str]:
+        """The tickets and the link of the thread a post goes to: a ticket's, or one Clangy has a conversation,
+        record or ticket of."""
+        threads = self.store.ticket_threads()
+        if to.startswith("DIS-"):
+            if to not in threads:
+                raise PostRefused(f"no ticket {to} with a thread")
+            return [to], threads[to]
+        if not to.isdigit():
+            raise PostRefused("`to:` is neither a DIS ticket nor a thread id")
+        tickets = sorted(t for t, link in threads.items() if link.rsplit("/", 1)[-1] == to)
+        record = self.store.records / f"{to}.md"
+        if conv := self.conversations.get(int(to)):
+            return tickets, conv.url
+        if tickets:
+            return tickets, threads[tickets[0]]
+        if record.exists() and "thread" in (meta := frontmatter(record.read_text())[0]):
+            return [], meta["thread"]
+        raise PostRefused(f"Clangy has no conversation, record or ticket of thread {to}")
