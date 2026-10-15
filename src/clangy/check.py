@@ -67,6 +67,9 @@ class ConsoleChat:
     async def download(self, attachment, path: Path) -> None:
         raise NotImplementedError
 
+    async def thread_parent(self, thread_id: int) -> int | None:
+        raise NotImplementedError
+
 
 async def probe_sandbox(config: Config, config_path: Path, base: Path, network: bool = True) -> dict[str, bool]:
     """Runs a probe script instead of pi through the same sandbox command line."""

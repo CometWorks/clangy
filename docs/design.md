@@ -9,7 +9,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 | `__main__.py` | The `clangy` command: `run`, `check`, `sync-knowledge`, `timings`. |
 | `config.py` | The TOML config and its validation, see configuration.md. |
 | `messages.py` | Discord messages as the core sees them (`IncomingMessage`, `Attachment`). |
-| `discord_bot.py` | discord.py client. Converts gateway messages to `IncomingMessage` and implements the `Chat` protocol (send, edit, create thread, download). The only module that knows about Discord. |
+| `discord_bot.py` | discord.py client. Converts gateway messages to `IncomingMessage` and implements the `Chat` protocol (send, edit, create thread, download, a thread's channel). The only module that knows about Discord. |
 | `core.py` | Channel rules, conversations, queued messages, one run per conversation, progress messages, retries, host tools, persistence, the developers' posts from the outbox. |
 | `backend.py` | Per-backend run queue (`parallel` runs at once), runs ahead, measured prompt and generation speeds, ETA, health checks and cooldowns, llama.cpp slot pinning and save/restore. |
 | `proxy.py` | Per-run HTTP server on a unix socket inside the work folder: forwards chat completions to the run's backend, detects backend failures, and serves the host tools. |
