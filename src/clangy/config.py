@@ -49,6 +49,7 @@ class BackendConfig(Strict):
     """openai kind: a failed backend gets new runs again after this long, or after the Retry-After it sent. Doubles
     with each further failure in a row, up to max_cooldown."""
     max_cooldown: float = 1800.0
+    """openai kind: the longest cooldown after failures in a row."""
 
     @model_validator(mode="after")
     def _check(self) -> "BackendConfig":
