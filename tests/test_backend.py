@@ -71,6 +71,21 @@ async def test_cloud_backend_returns_after_its_cooldown():
     assert not backend.available(450.0) and backend.available(500.0)
 
 
+async def test_cooldown_doubles_with_each_failure_in_a_row():
+    backend = Backend(config(cooldown=60, max_cooldown=200))
+    backend.mark_failed(now=0.0)
+    backend.mark_failed(now=30.0)
+    assert backend.failures == 1, "a run that was going when it failed doesn't count again"
+    assert not backend.available(89.0) and backend.available(90.0)
+    backend.mark_failed(now=100.0)
+    assert not backend.available(219.0) and backend.available(220.0)
+    backend.mark_failed(now=300.0)
+    assert not backend.available(499.0) and backend.available(500.0), "capped at max_cooldown"
+    backend.mark_ok()
+    backend.mark_failed(now=600.0)
+    assert backend.available(660.0)
+
+
 async def test_llamacpp_returns_only_after_a_health_check(backend):
     b = Backend(config(kind="llamacpp").model_copy(update={"url": backend.url}))
     b.mark_failed(now=0.0)

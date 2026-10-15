@@ -1033,6 +1033,8 @@ async def test_failed_backends_wait_for_health_or_cooldown(duo, chat, backend, b
     assert conv.status == "idle" and conv.backend == "local"
     assert chat.in_channel(1101)[-1].current.startswith("Default answer.")
     assert not duo.backends["cloud"].available(time.monotonic()), "cooling down"
+    assert duo.backends["local"].failures == 0, "reset by the answer"
+    assert duo.backends["cloud"].failures == 1
     assert metrics(duo, 1101)[-1]["backend_switch"] == {"from": "cloud", "reason": "failure"}
 
 

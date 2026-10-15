@@ -22,6 +22,8 @@ class Backend:
         self.run_seconds = DEFAULT_RUN_SECONDS
         self.healthy = True
         self._cooldown_until = 0.0
+        self.failures = 0
+        """Failures in a row, each one doubles the cooldown."""
         self._waiting: list[str] = []
         self._running: set[str] = set()
         self._changed = asyncio.Condition()
@@ -47,8 +49,17 @@ class Backend:
         return self.healthy
 
     def mark_failed(self, now: float, retry_after: float | None = None) -> None:
+        if now >= self._cooldown_until:
+            # Runs that were already going when it failed don't count again
+            self.failures += 1
         self.healthy = False
-        self._cooldown_until = now + max(self.config.cooldown, retry_after or 0.0)
+        cooldown = min(self.config.cooldown * 2 ** (self.failures - 1), self.config.max_cooldown)
+        self._cooldown_until = now + max(cooldown, retry_after or 0.0)
+        if self.config.kind != "llamacpp":
+            log.info("Backend %s cools down for %.0f s, failures in a row: %d", self.name, cooldown, self.failures)
+
+    def mark_ok(self) -> None:
+        self.failures = 0
 
     def ahead_of(self, conversation: str) -> int:
         """Runs that go before this conversation's: the running ones and those queued earlier."""
