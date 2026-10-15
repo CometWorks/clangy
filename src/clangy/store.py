@@ -32,7 +32,7 @@ class StoreError(ValueError):
     pass
 
 
-def _now() -> str:
+def utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -54,7 +54,19 @@ def _check_text(title: str, body: str) -> tuple[str, str]:
     return title, body
 
 
-def _replace(path: Path, text: str) -> None:
+def frontmatter(text: str) -> tuple[dict[str, str], str]:
+    """The `key: value` lines between the `---` lines at the start of a document, and the text after them."""
+    if not text.startswith("---\n"):
+        return {}, text.strip()
+    head, _, body = text[4:].partition("\n---\n")
+    return dict(line.split(": ", 1) for line in head.splitlines() if ": " in line), body.strip()
+
+
+def document(meta: dict[str, str], body: str) -> str:
+    return "---\n" + "".join(f"{k}: {_one_line(v)}\n" for k, v in meta.items()) + f"---\n\n{body}\n"
+
+
+def write_file(path: Path, text: str) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(text)
     tmp.replace(path)
@@ -167,15 +179,32 @@ class Store:
         _, body = _check_text("report", body)
         self.history.commit("Changes made outside Clangy")
         message = _message(f"Add a report to {ticket_id}", by, meta)
-        meta = {"added": _now(), **meta}
+        meta = {"added": utc_now(), **meta}
         if files:
             meta["notes"] = self._files_note(ticket_id, meta, files)
         lines = "".join(f"- {k}: {_one_line(v)}\n" for k, v in meta.items())
         report = f"## Report\n\n{lines}\n{body}\n\n"
         text = path.read_text()
         at = text.find("\n# Work log")
-        _replace(path, text.rstrip("\n") + "\n\n" + report if at < 0 else text[: at + 1] + report + text[at + 1 :])
+        write_file(path, text.rstrip("\n") + "\n\n" + report if at < 0 else text[: at + 1] + report + text[at + 1 :])
         self.history.commit(message)
+
+    def ticket_threads(self) -> dict[str, str]:
+        """The thread link of every ticket, open or closed."""
+        return {p.stem: meta["thread"] for p in self._tickets() if "thread" in (meta := frontmatter(p.read_text())[0])}
+
+    def log_work(self, ticket_id: str, line: str, subject: str, meta: dict[str, str]) -> None:
+        """Adds a line to the end of a ticket's work log, open or closed, with `subject` for the history."""
+        path = next((p for p in self._tickets() if p.stem == ticket_id), None)
+        if path is None:
+            raise StoreError(f"no such ticket: {ticket_id}")
+        self.history.commit("Changes made outside Clangy")
+        write_file(path, path.read_text().rstrip("\n") + f"\n- {_one_line(line)}\n")
+        self.history.commit(_message(subject, "", meta))
+
+    def _tickets(self) -> list[Path]:
+        tickets = self.root / "tickets"
+        return [p for d in (tickets, *(tickets / c for c in CLOSED)) for p in d.glob("DIS-[0-9][0-9][0-9][0-9].md")]
 
     def append_record(self, thread_id: int, title: str, url: str, entry: str) -> None:
         """Records a message of a record-mode forum thread for later recall."""
@@ -199,7 +228,7 @@ class Store:
             lines.append(f"notes: {note_id}")
         else:
             lines[notes] += f", {note_id}"
-        _replace(path, "\n".join(lines) + sep + rest)
+        write_file(path, "\n".join(lines) + sep + rest)
         return note_id
 
     def _write(self, kind: str, title: str, body: str, meta: dict[str, str], files: list[KeptFile] = ()) -> str:
@@ -214,10 +243,10 @@ class Store:
         while True:
             doc_id = f"{prefix}-{number:04d}"
             number += 1
-            header = {"id": doc_id, "title": title, "created": _now(), **meta}
+            header = {"id": doc_id, "title": title, "created": utc_now(), **meta}
             if kind == "ticket":
                 header.setdefault("status", "new")
-            text = "---\n" + "".join(f"{k}: {_one_line(v)}\n" for k, v in header.items()) + f"---\n\n{body}\n"
+            text = document(header, body)
             # mkdir and O_EXCL keep numbers unique even if two writers race
             if files:
                 if (directory / f"{doc_id}.md").exists():

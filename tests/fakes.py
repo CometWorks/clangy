@@ -161,6 +161,8 @@ class FakeChat:
         self.channel_history: dict[int, list] = {}
         self.history_calls: list[tuple] = []
         self.unreadable: set[int] = set()
+        self.parents: dict[int, int] = {}
+        """Thread id to channel id, for thread_parent."""
         self._next_id = 9000
 
     def in_channel(self, channel_id: int) -> list[Sent]:
@@ -192,6 +194,9 @@ class FakeChat:
             if (before_id is None or m.id < before_id) and (after is None or m.created >= after)
         ]
         return messages[-limit:] if limit else messages
+
+    async def thread_parent(self, thread_id: int) -> int | None:
+        return self.parents.get(thread_id)
 
     async def download(self, attachment: Attachment, path: Path) -> None:
         if attachment.url not in self.files:
