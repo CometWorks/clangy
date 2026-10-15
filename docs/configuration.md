@@ -16,7 +16,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `answer_max_bytes` | 10 MiB | Total size of the files attached to one answer. Keep it within the server's upload limit. Each file is limited to 5 MB regardless. |
 | `progress_interval` | `60` | How often the progress message is checked; it's edited only when its text changes. |
 | `health_interval` | `30` | How often to check failed llama.cpp backends and retry the conversations waiting for a backend. |
-| `max_retries` | `3` | Automatic retries after a backend failure, counted from the last mention. |
+| `max_retries` | `5` | Automatic retries after waiting for a backend, counted from the last mention or answer. |
 | `switch_margin` | `60` | A conversation moves to another backend only if that one answers sooner by this much, even after reading the whole conversation again. See design.md, Backends. |
 | `retention_days` | `30` | Conversations (all but `metrics.jsonl`) and records not touched for this long are deleted at startup. The message cache keeps two days at most. See design.md, Retention. |
 | `secret_markers` | book names, `knowledge/books` | Answers containing any of these (case-insensitive) are withheld. |

@@ -132,7 +132,7 @@ class Config(Strict):
     """Total size of the files attached to one answer."""
     progress_interval: float = 60.0
     health_interval: float = 30.0
-    max_retries: int = 3
+    max_retries: int = 5
     switch_margin: float = 60.0
     """A conversation moves to another backend only if that's faster by this much, after reading the whole prompt."""
     retention_days: float = Field(30.0, gt=0)

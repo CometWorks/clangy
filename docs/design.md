@@ -104,7 +104,7 @@ One known gap with thinking on: Qwen chat templates drop the reasoning of earlie
 
 ## Progress and ETA
 
-The progress message only says when the answer is expected, as a Discord timestamp (`<t:unix:R>`) that clients count down on their own: `⏳ Answer expected in 1 minute.` It adds details only when something is off: `⏳ Waiting for 2 other answers first.` while queued behind other conversations, `⏳ Taking longer than expected, deadline in 8 minutes.` once the ETA has passed, and `(retry 1/3)` on a run after waiting for a backend. The host checks it every `progress_interval` and edits it only when the text changes.
+The progress message only says when the answer is expected, as a Discord timestamp (`<t:unix:R>`) that clients count down on their own: `⏳ Answer expected in 1 minute.` It adds details only when something is off: `⏳ Waiting for 2 other answers first.` while queued behind other conversations, `⏳ Taking longer than expected, deadline in 8 minutes.` once the ETA has passed, and `(retry 1/5)` on a run after waiting for a backend. The host checks it every `progress_interval` and edits it only when the text changes.
 
 ETA = runs ahead × average run time ÷ `parallel` + max(prompt tokens ÷ prompt speed + 500 ÷ generation speed, average run time). Runs with tool calls take many model turns, so the measured average run time of successful runs is the floor. The prompt token estimate is the new text ÷ 4, plus 3000 on a conversation's first run. Speeds start from the config and follow the backend's reported `timings` (llama.cpp) as a moving average. Requests that processed fewer than 500 prompt tokens don't count, since they measure overhead more than speed.
 

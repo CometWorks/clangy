@@ -283,16 +283,16 @@ async def test_timeout_keeps_messages_and_session(bot, chat):
     assert [m.text for m in bot.conversations[1008].pending] == ["@Clangy again"]
 
 
-async def test_backend_loss_retries_three_times_then_gives_up(bot, chat, backend):
+async def test_backend_loss_retries_five_times_then_gives_up(bot, chat, backend):
     backend.status = 503
     await bot.on_message(forum_post(SUPPORT, 1009, "Crash"))
     await bot.wait_idle()
     conv = bot.conversations[1009]
     [progress] = chat.in_channel(1009)
-    assert conv.status == "backend_error" and "retry 1/3" in progress.current
+    assert conv.status == "backend_error" and "retry 1/5" in progress.current
     assert len(conv.pending) == 1 and not bot.agent.specs[0].paths.session.exists()
 
-    for attempt in (1, 2, 3):
+    for attempt in range(1, 6):
         await bot.retry_failed()
         await bot.wait_idle()
         assert conv.retries == attempt
@@ -302,7 +302,7 @@ async def test_backend_loss_retries_three_times_then_gives_up(bot, chat, backend
 
     await bot.retry_failed()
     await bot.wait_idle()
-    assert len(bot.agent.specs) == 4, "no automatic retries after giving up"
+    assert len(bot.agent.specs) == 6, "no automatic retries after giving up"
 
     backend.status = 200
     await bot.on_message(message(1009, "@Clangy still there?", parent_id=SUPPORT, mentions_bot=True))
@@ -319,7 +319,7 @@ async def test_backend_recovery_answers_in_the_error_message(bot, chat, backend)
     await bot.retry_failed()
     await bot.wait_idle()
     [progress] = chat.in_channel(1010)
-    assert any("retry 1/3" in edit for edit in progress.edits)
+    assert any("retry 1/5" in edit for edit in progress.edits)
     assert progress.current.startswith("Default answer.")
     assert bot.conversations[1010].retries == 0
 
@@ -1026,7 +1026,7 @@ async def test_failed_backends_wait_for_health_or_cooldown(duo, chat, backend, b
     await duo.on_message(message(1101, "@Clangy more", parent_id=SUPPORT, mentions_bot=True))
     await duo.wait_idle()
     conv = duo.conversations[1101]
-    assert conv.status == "backend_error" and "retry 1/3" in chat.in_channel(1101)[-1].current
+    assert conv.status == "backend_error" and "retry 1/5" in chat.in_channel(1101)[-1].current
     assert len(backend.requests) == 1, "no request to local before its health check"
 
     await duo.retry_failed()
@@ -1049,7 +1049,7 @@ async def test_fallovers_stop_after_trying_every_other_backend(duo, chat, backen
     assert len(duo.agent.specs) == 2
     assert conv.status == "backend_error" and conv.retries == 0 and conv.fallovers == 1
     [progress] = chat.in_channel(1102)
-    assert "retry 1/3" in progress.current
+    assert "retry 1/5" in progress.current
 
     backend2.status = 200
     await duo.retry_failed()
