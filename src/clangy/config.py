@@ -46,7 +46,9 @@ class BackendConfig(Strict):
     stall_timeout: float | None = None
     """A request fails if its stream stops for this long after the first data."""
     cooldown: float = 60.0
-    """openai kind: a failed backend gets new runs again after this long, or after the Retry-After it sent."""
+    """openai kind: a failed backend gets new runs again after this long, or after the Retry-After it sent. Doubles
+    with each further failure in a row, up to max_cooldown."""
+    max_cooldown: float = 1800.0
 
     @model_validator(mode="after")
     def _check(self) -> "BackendConfig":

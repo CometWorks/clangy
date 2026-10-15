@@ -56,7 +56,8 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `headers` | `{}` | Sent with every chat completion request, over the top-level `headers`, key by key. |
 | `first_byte_timeout` | none | A request fails if no data arrives for this long. Only for cloud APIs: llama.cpp sends nothing while it reads a long prompt. Keep-alive comments don't count as data. |
 | `stall_timeout` | none | A request fails if its stream stops for this long after the first data. |
-| `cooldown` | `60` | Kinds other than `llamacpp`: how long a failed backend gets no runs, longer if it sent `Retry-After`. |
+| `cooldown` | `60` | Kinds other than `llamacpp`: how long a failed backend gets no runs, longer if it sent `Retry-After`. Doubles with each further failure in a row; a successful run resets it. |
+| `max_cooldown` | `1800` | The longest cooldown after failures in a row. |
 
 A request fails on a connection error, HTTP 401, 402, 403, 404, 408, 429 or 5xx (the backend can't serve now; a 400 means the request itself was rejected and isn't one), an error inside the stream (an event with `error`, or `finish_reason` `error`), or one of the timeouts. The run is then repeated on another backend right away, see design.md, Backends.
 

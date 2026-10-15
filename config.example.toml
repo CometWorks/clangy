@@ -56,6 +56,7 @@ gen_tps = 40.0
 # first_byte_timeout = 60
 # stall_timeout = 60
 # cooldown = 60
+# max_cooldown = 1800     # the cooldown doubles with each failure in a row, up to this
 # # OpenRouter falls back within a request, to at most 3 models
 # extra_body = { models = ["qwen/qwen3.8-27b:free", "nvidia/nemotron-3-super-120b-a12b:free", "google/gemma-4-31b-it:free"] }
 

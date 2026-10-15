@@ -759,6 +759,7 @@ class Clangy:
             conv.status = "idle"
             conv.retries = 0
             conv.runs += 1
+            backend.mark_ok()
             if last := next((r for r in reversed(stats.per_request) if r.get("prompt_tokens")), None):
                 conv.context_tokens = last["prompt_tokens"] + last.get("completion_tokens", 0)
             attachments = outbox.commit(self.files_dir(conv.thread_id) / "sent" / f"{conv.runs:04d}")
