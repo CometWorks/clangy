@@ -9,8 +9,8 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 | `__main__.py` | The `clangy` command: `run`, `check`, `sync-knowledge`, `timings`. |
 | `config.py` | The TOML config and its validation, see configuration.md. |
 | `messages.py` | Discord messages as the core sees them (`IncomingMessage`, `Attachment`). |
-| `discord_bot.py` | discord.py client. Converts gateway messages to `IncomingMessage` and implements the `Chat` protocol (send, edit, create thread, download). The only module that knows about Discord. |
-| `core.py` | Channel rules, conversations, queued messages, one run per conversation, progress messages, retries, host tools, persistence. |
+| `discord_bot.py` | discord.py client. Converts gateway messages to `IncomingMessage` and implements the `Chat` protocol (send, edit, create thread, download, a thread's channel). The only module that knows about Discord. |
+| `core.py` | Channel rules, conversations, queued messages, one run per conversation, progress messages, retries, host tools, persistence, the developers' posts from the outbox. |
 | `backend.py` | Per-backend run queue (`parallel` runs at once), runs ahead, measured prompt and generation speeds, ETA, health checks and cooldowns, llama.cpp slot pinning and save/restore. |
 | `proxy.py` | Per-run HTTP server on a unix socket inside the work folder: forwards chat completions to the run's backend, detects backend failures, and serves the host tools. |
 | `runner.py` | Writes pi's config, builds the firejail command line, runs pi with a deadline, reads its JSON event stream, and replaces the answer in pi's session when the host shortened it. |
@@ -207,6 +207,30 @@ The agent reads `tickets/`, `notes/`, `plans/` and the records through read-only
 
 The workspace has a git history, so a deleted or overwritten document can be brought back. Its repository is `.history.git` in the workspace root, outside anything the sandbox can see, and only the host commits to it. Every write by a host tool is a commit by Clangy that names the Discord user who asked and the thread. Edits made by hand on the host go into a separate "Changes made outside Clangy" commit before the next write, and at startup. Only `AGENTS.md`, `tickets/`, `notes/` and `plans/` are tracked, since the workspace may be a home folder. If the repository has an `origin` remote, every commit is pushed there in the background. A failed commit or push is logged and doesn't stop the write. To bring a file back: `git --git-dir=.history.git --work-tree=. checkout <commit> -- <path>`.
 
+## Posts from the developers
+
+Developers answer a reporter through Clangy, which is in the thread anyway: to tell them a ticket is fixed and which release has the fix, or to ask for something a ticket is missing. They queue the message in `<data_dir>/outbox/`, and the running bot looks there every 10 seconds. Nothing is posted on its own, closing a ticket included.
+
+A queued message is a Markdown file, `<name>.md`, with the thread in its frontmatter and the text below it:
+
+```
+---
+to: DIS-0017
+---
+
+The fix is in Bugfixes 1.7.0, which Pulsar downloads on its next start.
+```
+
+`to:` is a ticket, open or closed, whose `thread:` names the thread, or a thread id. Clangy posts only to a thread it has a conversation, record or ticket of, and only if Discord says the thread is in one of its channels. The text has to fit one Discord message with the mention footer, which every post ends with like an answer. Write the file under another name first and rename it, so the bot never reads half of it.
+
+The name is the post's key. Before posting, Clangy creates `sent/<name>.md` with exclusive file creation, then posts, then adds the time and the message link to it. A name that is already in `sent/` is refused, so queuing the same file again never posts twice, and neither does a restart in the middle of a post: its `sent/` file stays without a `message:`, and the thread shows whether it went out. A refused or failed message moves to `failed/<name>.md` with an `error:` line. If posting failed, the `sent/` file is removed again, so the message can be fixed and queued under the same name.
+
+A post shows up where it matters:
+
+- Each ticket of the thread gets a work log line with the message link, as a history commit.
+- If the conversation is still kept, the post joins its known messages as Clangy's own, and the next run gets a `[host]` note with the text and the ticket. A reporter who answers with a mention gets an answer as usual, and the model can add what they say to the ticket with `ticket_add_report`.
+- In a thread whose conversation expired, the post has the footer, so a later mention reads it back as one of Clangy's answers (see When Clangy responds).
+
 ## Metrics
 
 Every run, answered or not, appends one JSON line to its conversation's `metrics.jsonl`. JSONL keeps it append-only and easy to load into pandas or DuckDB later. `clangy timings` summarizes all of them.
@@ -233,7 +257,7 @@ The host socket is bound through `/proc/self/fd/<dir fd>/host.sock` and pi conne
 
 ## Persisted state
 
-`<data_dir>/messages.sqlite` caches the messages of Clangy's channels (see Context and the message cache). `<data_dir>/python/<hash>/` holds the sandboxes' Python environment (see Sandbox).
+`<data_dir>/messages.sqlite` caches the messages of Clangy's channels (see Context and the message cache). `<data_dir>/python/<hash>/` holds the sandboxes' Python environment (see Sandbox). `<data_dir>/outbox/` holds the developers' posts, queued, `sent/` and `failed/` (see Posts from the developers).
 
 `<data_dir>/conversations/<thread id>/`:
 

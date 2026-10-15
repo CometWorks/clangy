@@ -28,6 +28,7 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 │   │   ├── files/           received/, sent/<run>/, outbox/
 │   │   └── work/            the sandbox's work folder
 │   ├── records/<thread id>.md
+│   ├── outbox/              posts queued by developers, with sent/ and failed/
 │   ├── messages.sqlite      message cache
 │   ├── python/<hash>/       the sandboxes' Python environment
 │   └── check/               scratch folders of `clangy check`
@@ -122,6 +123,16 @@ clangy [--config FILE] run | check | sync-knowledge | timings
 | `timings` | Summarizes the `metrics.jsonl` of all conversations. |
 
 `--config` defaults to `config.toml` in the working directory.
+
+## Posting in a thread
+
+To answer a reporter, write the message as an outbox file (see design.md, Posts from the developers) and move it into `~/data/outbox` in one step:
+
+```bash
+ssh clangy@nas 'cat > ~/data/outbox/DIS-0017-fixed.tmp && mv ~/data/outbox/DIS-0017-fixed.tmp ~/data/outbox/DIS-0017-fixed.md' < reply.md
+```
+
+Within 10 seconds it is in `~/data/outbox/sent/` with the message link, or in `~/data/outbox/failed/` with the error.
 
 ## Checks on the host
 

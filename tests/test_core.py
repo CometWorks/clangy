@@ -16,6 +16,7 @@ from clangy.config import BackendConfig, ChannelConfig, Config, KnowledgeSource
 from clangy.core import Attachment, Clangy, Conversation, IncomingMessage
 from clangy.proxy import short_path
 from clangy.runner import RunResult, RunSpec
+from clangy.store import frontmatter
 
 GUILD = 1
 SUPPORT, QUIET_FORUM, RECORD, MENTION, SE1_FORUM, SLOW_FORUM = 10, 20, 30, 40, 50, 60
@@ -1274,3 +1275,104 @@ async def test_unknown_thread_keeps_only_clangys_answers(bot, chat):
         "Carol: Thanks",
         "Clangy (you): Short answer.",
     ]
+
+
+def queue(bot: Clangy, name: str, to: str, body: str) -> None:
+    bot.outbox.mkdir(exist_ok=True)
+    (bot.outbox / f"{name}.md").write_text(f"---\nto: {to}\n---\n\n{body}\n")
+
+
+def thread_url(thread_id: int) -> str:
+    return f"https://discord.com/channels/{GUILD}/{thread_id}"
+
+
+async def test_queued_post_goes_to_the_ticket_thread_once(bot, chat, config):
+    await bot.on_message(forum_post(QUIET_FORUM, 1160, "Crash on load", author="Carol"))
+    bot.store.create("ticket", "Crash on load", "Details", {"thread": thread_url(1160)}, by="Carol")
+    chat.parents[1160] = QUIET_FORUM
+    queue(bot, "DIS-0001-info", "DIS-0001", "Which Pulsar version do you run?")
+    await bot.send_posts()
+    [post] = chat.in_channel(1160)
+    assert post.content == f"Which Pulsar version do you run?\n\n{text.footer('Clangy')}"
+    link = f"{thread_url(1160)}/{post.message_id}"
+    sent = (bot.outbox / "sent" / "DIS-0001-info.md").read_text()
+    assert f"message: {link}\n" in sent and "posted: " in sent and "to: DIS-0001\n" in sent
+    assert not (bot.outbox / "DIS-0001-info.md").exists()
+    ticket = (config.data_dir / "workspace" / "tickets" / "DIS-0001.md").read_text()
+    assert ticket.endswith(f": Clangy posted DIS-0001-info from the outbox in the thread: {link}\n")
+    log = subprocess.run(
+        ["git", f"--git-dir={bot.store.history.git_dir}", "log", "-1", "--format=%B"], capture_output=True, text=True
+    ).stdout
+    assert log.startswith("Post DIS-0001-info in the thread of DIS-0001")
+
+    # A retry under the same name is refused
+    queue(bot, "DIS-0001-info", "DIS-0001", "Which Pulsar version do you run?")
+    await bot.send_posts()
+    assert len(chat.in_channel(1160)) == 1
+    failed = (bot.outbox / "failed" / "DIS-0001-info.md").read_text()
+    assert "error: sent/DIS-0001-info.md exists, it was posted before\n" in failed
+
+    # The reporter's answer comes with the post, so the model can add it to the ticket
+    await bot.on_message(message(1160, "@Clangy 2.4.3", parent_id=QUIET_FORUM, author="Carol", mentions_bot=True))
+    await bot.wait_idle()
+    prompt = bot.agent.prompts[0]
+    note = "[host] A developer had you post this in the thread about DIS-0001: Which Pulsar version do you run?"
+    assert prompt.index(note) < prompt.index("Carol: @Clangy 2.4.3")
+    assert bot.conversations[1160].known[post.message_id].own
+
+
+async def test_queued_post_by_thread_id_without_conversation(bot, chat, config):
+    tickets = config.data_dir / "workspace" / "tickets"
+    bot.store.create("ticket", "Old crash", "Details", {"thread": thread_url(1161)})
+    (tickets / "DIS-0001.md").rename(tickets / "completed" / "DIS-0001.md")
+    bot.store.append_record(1162, "Request", thread_url(1162), "**Dan**: please add X")
+    chat.parents.update({1161: QUIET_FORUM, 1162: RECORD})
+    queue(bot, "fixed", "1161", "Fixed in Bugfixes 1.7.0.")
+    queue(bot, "request", "1162", "Added in 1.8.0.")
+    await bot.send_posts()
+    assert chat.in_channel(1161)[0].content.startswith("Fixed in Bugfixes 1.7.0.")
+    assert chat.in_channel(1162)[0].content.startswith("Added in 1.8.0.")
+    assert "Clangy posted fixed from the outbox" in (tickets / "completed" / "DIS-0001.md").read_text()
+    assert sorted(p.name for p in (bot.outbox / "sent").iterdir()) == ["fixed.md", "request.md"]
+
+
+async def test_queued_posts_are_refused_outside_known_threads(bot, chat, config):
+    bot.store.create("ticket", "Elsewhere", "Details", {"thread": thread_url(1163)})
+    bot.store.create("ticket", "Here", "Details", {"thread": thread_url(1164)})
+    chat.parents.update({1163: 999, 1164: QUIET_FORUM})
+    queue(bot, "a", "DIS-0001", "Hi")
+    queue(bot, "b", "DIS-0099", "Hi")
+    queue(bot, "c", "1165", "Hi")
+    queue(bot, "d", "general", "Hi")
+    queue(bot, "e", "DIS-0002", "")
+    queue(bot, "f", "DIS-0002", "x" * 2000)
+    await bot.send_posts()
+    assert chat.messages == {} and list(bot.outbox.glob("*.md")) == []
+    errors = {p.stem: frontmatter(p.read_text())[0]["error"] for p in (bot.outbox / "failed").iterdir()}
+    assert errors == {
+        "a": "thread 1163 is not in a channel Clangy monitors",
+        "b": "no ticket DIS-0099 with a thread",
+        "c": "Clangy has no conversation, record or ticket of thread 1165",
+        "d": "`to:` is neither a DIS ticket nor a thread id",
+        "e": "the message is empty",
+        "f": f"the message is over {text.LIMIT - 2 - len(text.footer('Clangy'))} characters",
+    }
+
+
+async def test_failed_post_can_be_queued_again(bot, chat, monkeypatch):
+    bot.store.create("ticket", "Crash", "Details", {"thread": thread_url(1166)})
+    chat.parents[1166] = QUIET_FORUM
+    send = chat.send
+
+    async def forbidden(*args, **kwargs):
+        raise RuntimeError("403 Forbidden")
+
+    monkeypatch.setattr(chat, "send", forbidden)
+    queue(bot, "reply", "DIS-0001", "Fixed.")
+    await bot.send_posts()
+    assert "error: 403 Forbidden\n" in (bot.outbox / "failed" / "reply.md").read_text()
+    assert not (bot.outbox / "sent" / "reply.md").exists()
+    monkeypatch.setattr(chat, "send", send)
+    queue(bot, "reply", "DIS-0001", "Fixed.")
+    await bot.send_posts()
+    assert len(chat.in_channel(1166)) == 1
