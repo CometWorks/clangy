@@ -104,7 +104,7 @@ class Conversation(BaseModel):
     progress_message_id: int | None = None
     retries: int = 0
     """Runs after waiting for a backend, since the last mention or answer."""
-    fallovers: int = 0
+    failovers: int = 0
     """Runs moved to another backend right after a failure, since the last retry, mention or answer."""
     runs: int = 0
     host_notes: list[str] = Field(default_factory=list)
@@ -367,7 +367,7 @@ class Clangy:
         await self._add_message(conv, channel, msg)
         if msg.mentions_bot:
             self._cancel_first_answer(conv)
-            conv.retries = conv.fallovers = 0
+            conv.retries = conv.failovers = 0
             self.trigger(conv)
         elif new and channel.initial_response or conv.thread_id in self._first_answer:
             self._schedule_first_answer(conv, channel.initial_delay)
@@ -758,7 +758,7 @@ class Clangy:
             conv.pending = [m for m in conv.pending if m.id not in consumed]
             conv.host_notes = [n for n in conv.host_notes if n not in delivered]
             conv.status = "idle"
-            conv.retries = conv.fallovers = 0
+            conv.retries = conv.failovers = 0
             conv.runs += 1
             backend.mark_ok()
             if last := next((r for r in reversed(stats.per_request) if r.get("prompt_tokens")), None):
@@ -773,10 +773,10 @@ class Clangy:
         if stats.backend_failed:
             now = time.monotonic()
             backend.mark_failed(now, stats.retry_after)
-            if conv.fallovers < len(self.backends) - 1 and any(b.available(now) for b in self.backends.values()):
+            if conv.failovers < len(self.backends) - 1 and any(b.available(now) for b in self.backends.values()):
                 # Another backend takes over right away, even though it has to read the whole conversation. Users
                 # see no warning, the next run updates the progress message.
-                conv.fallovers += 1
+                conv.failovers += 1
                 self.save(conv)
                 self.trigger(conv)
             else:
@@ -1167,6 +1167,6 @@ class Clangy:
             if conv.thread_id in self._workers and not self._workers[conv.thread_id].done():
                 continue
             conv.retries += 1
-            conv.fallovers = 0
+            conv.failovers = 0
             self.save(conv)
             self.trigger(conv)

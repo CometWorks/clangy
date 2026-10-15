@@ -237,7 +237,7 @@ The host socket is bound through `/proc/self/fd/<dir fd>/host.sock` and pi conne
 
 `<data_dir>/conversations/<thread id>/`:
 
-- `state.json`: channel, backend and the conversation's size after its last answer (for the switch rule), game, forum title, status, queued messages, pending `[host]` notes, the conversation's known messages, progress message id, retry and answer counts, the files already sent. Host only.
+- `state.json`: channel, backend and the conversation's size after its last answer (for the switch rule), game, forum title, status, queued messages, pending `[host]` notes, the conversation's known messages, progress message id, retry, failover and answer counts, the files already sent. Host only.
 - `files/`: `received/` attachments, `sent/<run>/` files sent in answers, `outbox/` while a run is staging files. Host only.
 - `work/`: the sandbox's folder: the files the agent writes (`out/`), the `attachments`, `store`, `guide` and knowledge links, `.pi/` (session, its snapshot `session.bak` from before the current run, system prompt, pi config) and, during a run, `.clangy/host.sock` and `.clangy/proxy.sock`.
 - `metrics.jsonl`: per-request token and timing stats.
