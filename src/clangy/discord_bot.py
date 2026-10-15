@@ -1,6 +1,7 @@
 """discord.py adapter: turns gateway events into core messages and implements the Chat protocol."""
 
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -81,6 +82,14 @@ class DiscordChat:
 
 
 REPLY_TYPES = (discord.MessageType.reply, discord.MessageType.thread_starter_message)
+CUSTOM_EMOJI = re.compile(r"<a?:(\w+):\d+>")
+
+
+def emoji_name(emoji: discord.PartialEmoji | discord.Emoji | str) -> str:
+    """A unicode emoji as it is, a custom one as `:name:`."""
+    if isinstance(emoji, str):
+        return emoji
+    return f":{emoji.name}:" if emoji.id else emoji.name
 
 
 def incoming(message: discord.Message, bot: discord.ClientUser) -> IncomingMessage:
@@ -97,14 +106,17 @@ def incoming(message: discord.Message, bot: discord.ClientUser) -> IncomingMessa
         parent_id=channel.parent_id if in_thread else None,
         guild_id=message.guild.id if message.guild else 0,
         author=message.author.display_name,
-        text=message.clean_content,
+        # clean_content leaves custom emojis as <:name:id>
+        text=CUSTOM_EMOJI.sub(r":\1:", message.clean_content),
         created=message.created_at,
         mentions_bot=bot in message.mentions or role is not None and role.id in message.raw_role_mentions,
         from_self=message.author.id == bot.id,
         # The starter message of a forum post has the same id as the thread
         starts_thread=in_thread and message.id == channel.id,
         thread_name=channel.name if in_thread else "",
+        thread_tags=[t.name for t in channel.applied_tags] if in_thread else [],
         attachments=[Attachment(a.id, a.filename, a.size, a.url) for a in message.attachments],
+        reactions={emoji_name(r.emoji): r.count for r in message.reactions},
         replied_to=incoming(replied, bot) if isinstance(replied, discord.Message) else None,
     )
 
@@ -147,6 +159,15 @@ class ClangyClient(discord.Client):
         if "content" not in payload.data:
             return  # embeds being added, not an edit by the user
         self.core.on_edit(incoming(payload.message, self.user))
+
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
+        assert self.core is not None
+        user = payload.member.display_name if payload.member else "Someone"
+        self.core.on_reaction(payload.message_id, emoji_name(payload.emoji), 1, user)
+
+    async def on_raw_reaction_remove(self, payload: discord.RawReactionActionEvent) -> None:
+        assert self.core is not None
+        self.core.on_reaction(payload.message_id, emoji_name(payload.emoji), -1, "")
 
     async def on_raw_message_delete(self, payload: discord.RawMessageDeleteEvent) -> None:
         assert self.core is not None

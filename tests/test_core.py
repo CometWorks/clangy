@@ -1122,6 +1122,47 @@ async def test_mention_threads_get_no_title_note(bot):
     assert not any("title" in prompt for prompt in bot.agent.prompts)
 
 
+async def test_forum_tags_go_to_the_model(bot):
+    tags = ["Pulsar", "Magnetar"]
+    await bot.on_message(forum_post(QUIET_FORUM, 1131, "Can't weld", thread_tags=tags))
+    in_thread = {"parent_id": QUIET_FORUM, "thread_name": "Post"}
+    await bot.on_message(message(1131, "@Clangy help", mentions_bot=True, thread_tags=tags, **in_thread))
+    await bot.wait_idle()
+    assert "[host] The title of the forum post: Post\n[host] The tags of the forum post: Pulsar, Magnetar\n" in (
+        bot.agent.prompts[0]
+    )
+
+    await bot.on_message(message(1131, "@Clangy and?", mentions_bot=True, thread_tags=tags, **in_thread))
+    await bot.on_message(message(1131, "@Clangy retagged", mentions_bot=True, thread_tags=["Magnetar"], **in_thread))
+    await bot.on_message(message(1131, "@Clangy untagged", mentions_bot=True, **in_thread))
+    await bot.wait_idle()
+    later = "".join(bot.agent.prompts[1:])
+    assert "[host] The tags of the forum post are now: Magnetar" in later
+    assert "[host] The forum post has no tags now." in later
+    assert later.count("tags") == 2, "told once per change"
+
+
+async def test_reactions_go_to_the_model(bot):
+    await bot.on_message(forum_post(QUIET_FORUM, 1132, "Crash <3", author="Alice", reactions={"👍": 2}))
+    bot.on_reaction(1132, "🙏", 1, "Alice")
+    bot.on_reaction(1132, "👍", -1, "")
+    bot.on_reaction(1132, "👍", -1, "")
+    await bot.on_message(message(1132, "@Clangy help", parent_id=QUIET_FORUM, mentions_bot=True))
+    await bot.wait_idle()
+    assert "Alice: Crash <3 [reactions: 🙏 1]\n" in bot.agent.prompts[0], "queued: counted in place"
+
+    answer_id = next(i for i, m in bot.conversations[1132].known.items() if m.own)
+    bot.on_reaction(answer_id, ":pepe_thanks:", 1, "Alice")
+    bot.on_reaction(1132, "🙏", -1, "")
+    bot.on_reaction(4242, "👍", 1, "Bob")
+    await bot.on_message(message(1132, "@Clangy thanks", parent_id=QUIET_FORUM, mentions_bot=True))
+    await bot.wait_idle()
+    second = bot.agent.prompts[1]
+    assert "[host] Alice reacted with :pepe_thanks: to your message from " in second
+    assert second.count("react") == 1, "seen messages: only new reactions, unknown messages ignored"
+    assert bot.conversations[1132].known[1132].reactions == {}
+
+
 async def test_priority_decides_before_speed(config, chat, backend, backend2):
     config.backends = [
         BackendConfig(name="local", url=backend.url, model="m", kind="llamacpp", priority=2),

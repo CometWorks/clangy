@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import discord
 
-from clangy.discord_bot import incoming
+from clangy.discord_bot import emoji_name, incoming
 
 
 def make_message(channel, author_id: int = 5, mentions=(), role_mentions=()) -> MagicMock:
@@ -33,6 +33,35 @@ def test_forum_starter_message():
     assert (msg.channel_id, msg.parent_id, msg.starts_thread, msg.thread_name) == (42, 10, True, "Crash")
     assert msg.mentions_bot and not msg.from_self
     assert msg.attachments[0].filename == "info.log"
+
+
+def test_forum_tags_reactions_and_custom_emojis():
+    bot = MagicMock(spec=discord.ClientUser, id=99)
+    thread = MagicMock(spec=discord.Thread, id=42, parent_id=10)
+    thread.applied_tags = [MagicMock(spec=discord.ForumTag), MagicMock(spec=discord.ForumTag)]
+    thread.applied_tags[0].name, thread.applied_tags[1].name = "Pulsar", "Magnetar"
+    message = make_message(thread)
+    message.clean_content = "Thanks <:pepe_thanks:123> <a:spin:456> :)"
+    custom = discord.PartialEmoji(name="pepe_thanks", id=123)
+    message.reactions = [MagicMock(emoji="🙏", count=1), MagicMock(emoji=custom, count=2)]
+    msg = incoming(message, bot)
+    assert msg.thread_tags == ["Pulsar", "Magnetar"]
+    assert msg.text == "Thanks :pepe_thanks: :spin: :)"
+    assert msg.reactions == {"🙏": 1, ":pepe_thanks:": 2}
+    assert emoji_name(discord.PartialEmoji(name="🙏")) == "🙏"
+
+
+async def test_reaction_events_reach_the_core():
+    from clangy.discord_bot import ClangyClient
+
+    client = MagicMock(spec=ClangyClient)
+    client.core = MagicMock()
+    event = MagicMock(spec=discord.RawReactionActionEvent, message_id=42, emoji=discord.PartialEmoji(name="👍"))
+    event.member.display_name = "Alice"
+    await ClangyClient.on_raw_reaction_add(client, event)
+    event.member = None
+    await ClangyClient.on_raw_reaction_remove(client, event)
+    assert client.core.on_reaction.call_args_list == [((42, "👍", 1, "Alice"),), ((42, "👍", -1, ""),)]
 
 
 def test_a_ping_of_the_bots_role_mentions_the_bot():
