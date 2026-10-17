@@ -1,5 +1,4 @@
 import gzip
-import os
 
 import pytest
 
@@ -131,7 +130,7 @@ def test_notes_are_tasks_with_the_note_label_linked_to_the_tickets_they_name(tra
 def test_large_text_is_gzipped_and_too_large_files_stop_the_write(tracker, vikunja, tmp_path):
     log, image = tmp_path / "info.log", tmp_path / "shot.png"
     log.write_text("2026-10-17 INFO all good\n" * 20000)
-    image.write_bytes(os.urandom(300 * 1024))
+    image.write_bytes(b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR" + bytes(300 * 1024))  # Compresses well, but binary
     tracker.create("ticket", "Crash", "Body", {}, [(log, "Pulsar log"), (image, "Screenshot")])
     (_, log_name, packed), (_, image_name, raw) = vikunja.uploads
     assert log_name == "info.log.gz" and gzip.decompress(packed) == log.read_bytes()

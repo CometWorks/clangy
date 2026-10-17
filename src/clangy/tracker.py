@@ -149,10 +149,10 @@ class Tracker:
         return json.loads(raw) if raw else None
 
     def packed(self, data: bytes, name: str) -> tuple[bytes, str]:
-        """The file as it is attached: gzipped if it's large and compresses well, like a log."""
-        if len(data) >= self.config.gzip_min_bytes:
+        """The file as it is attached: gzipped if it's large text that compresses well, like a log."""
+        if len(data) >= self.config.gzip_min_bytes and b"\0" not in data[:8192]:  # Images keep their preview
             packed = gzip.compress(data, mtime=0)
-            if len(packed) <= len(data) * 0.7:  # Text does, images and archives don't
+            if len(packed) <= len(data) * 0.7:
                 data, name = packed, name + ".gz"
         if len(data) > self.config.max_file_bytes:
             raise StoreError(f"{name} is larger than the {self.config.max_file_bytes // 1000**2} MB the tracker takes")
