@@ -97,9 +97,9 @@ def test_html_in_reports_is_escaped(tracker, vikunja):
 def test_header_round_trip():
     meta = {"created": "2026-10-17T12:00:00Z", "thread": THREAD, "game": "se1", "ignored": "x"}
     assert parse_header(header_html(meta)) == {k: v for k, v in meta.items() if k != "ignored"}
-    assert to_text("<h1>Logs</h1><p>a<br>b</p><ul><li>x</li></ul><pre><code>1 &lt; 2</code></pre>") == (
-        "# Logs\n\na\nb\n\n- x\n\n1 < 2"
-    )
+    assert to_text(
+        "<h1>Logs</h1>\n<p>a<br>b</p>\n<ul>\n<li>x</li>\n<li>y</li>\n</ul>\n<pre><code>1 &lt; 2</code></pre>"
+    ) == ("# Logs\n\na\nb\n\n- x\n- y\n\n1 < 2")
 
 
 def test_api_errors_become_store_errors(tracker, vikunja):
