@@ -78,7 +78,9 @@ async def probe_sandbox(config: Config, config_path: Path, base: Path, network: 
     work.mkdir(parents=True)
     other = base / "probe" / "other-conversation"
     other.mkdir()
-    secrets = [other, config_path.resolve(), Path.home() / ".ssh", Path.home() / ".pi" / "agent" / "auth.json"]
+    # ~/.bashrc: the nas exports the Vikunja key there
+    home = Path.home()
+    secrets = [other, config_path.resolve(), home / ".ssh", home / ".bashrc", home / ".pi" / "agent" / "auth.json"]
     hidden = [str(p) for p in secrets if p.exists()]
     all_sources = [*config.mounts, *(s for sources in config.knowledge.values() for s in sources)]
     sources = [s.path for s in all_sources if s.path and s.path.exists()]
