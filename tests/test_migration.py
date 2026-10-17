@@ -48,6 +48,7 @@ def test_migration_copies_tickets_notes_reports_and_work_logs(tmp_path, monkeypa
         assert "Fixed in Bugfixes 1.7.0" in work_log
         assert not note["done"] and [l["title"] for l in note["labels"]] == ["se2", "note"]
         assert [x["id"] for x in note["related_tasks"]["related"]] == [2, 1]
+        assert vikunja.bucket_of == {3: 36}
         tracker = Tracker(TasksConfig(url=vikunja.url, project=8, api_key="key"), tmp_path / "tickets", tmp_path / "n")
         assert tracker.ticket_threads() == {"DIS-0001": "https://discord.com/channels/1/1015"}
         assert (tmp_path / "tickets" / "canceled" / "DIS-0002.md").exists()

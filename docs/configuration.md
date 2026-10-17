@@ -47,7 +47,8 @@ Tickets and notes go to a Vikunja project instead of the workspace's `tickets/` 
 | `api_key` | none | An API key with access to that project only. Keep the config readable only by the bot's user. |
 | `api_key_env` | `TASKS_PASS` | Variable with the key, used when `api_key` is unset. If the service's environment lacks it, Clangy reads it from an interactive bash, since `~/.bashrc` exports it only there. The key never enters the sandbox. |
 | `canceled_label` | `cancelled` | A done task with this label is canceled, otherwise completed. |
-| `note_label` | `note` | Marks the tasks that are notes. Filter it out of the project's Kanban view, see deployment.md. |
+| `note_label` | `note` | Marks the tasks that are notes. |
+| `notes_bucket` | `Notes` | The Kanban bucket new notes are moved into. Matched without case and punctuation; create it on the board first. |
 | `first_number` | `1` | The DIS number of the first ticket while the project has none. |
 | `max_file_bytes` | 20 MB | The server's attachment limit (Vikunja's `files.maxsize`). Larger files, after gzipping, can't be kept with a ticket or note, and the tool call fails. |
 | `gzip_min_bytes` | 100 KiB | Text files (no NUL byte in the first 8 KiB) from this size on are attached gzipped (`info.log.gz`) when that makes them at least 30% smaller. Images stay as they are, so Vikunja still previews them. |

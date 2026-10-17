@@ -4,7 +4,7 @@
 
 Run it before Clangy starts with `[tasks]` configured. Tickets go in DIS order, so the task index matches the number
 in an empty project. A note that holds a ticket's files becomes a comment on the ticket, with the files attached. The
-other notes become tasks of their own with the note label, linked to the tickets they name and the tickets naming them.
+other notes become tasks of their own with the note label in the Notes bucket, linked to the tickets they name and the tickets naming them.
 Large compressible files are attached gzipped; files attached raw by an earlier run are swapped for gzipped copies.
 Tickets and notes already in Vikunja are skipped, so a failed run can be repeated. The workspace's files stay as they are.
 """
@@ -117,6 +117,7 @@ def migrate_note(tracker: Tracker, workspace: Path, note_id: str, main: Path, na
         tracker.comment(
             task_id, f"<p>Not attached, too large: {', '.join(skipped)}. They stay in {origin.parent}/.</p>"
         )
+    tracker.move_to_bucket(task_id, tracker.config.notes_bucket)
     tracker.relate_mentions(task_id, " ".join([body, fields.get("ticket", ""), *naming]))
     print(f"  -> task {task_id}", flush=True)
 

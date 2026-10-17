@@ -108,7 +108,7 @@ def bash_variable(name: str) -> str:
 class Tracker:
     """The tickets and notes of one Vikunja project. Titles start with the DIS or N id, which Clangy assigns.
 
-    Notes carry the note label, which the project's Kanban view filters out.
+    Notes carry the note label and go into the Kanban board's notes bucket, out of the way of the tickets.
     """
 
     def __init__(self, config: TasksConfig, mirror: Path, notes_mirror: Path):
@@ -259,11 +259,25 @@ class Tracker:
                     self.label(task["id"], label)
                 self.attach(task["id"], uploads)
                 if kind == "note":
+                    self.move_to_bucket(task["id"], self.config.notes_bucket)
                     self.relate_mentions(task["id"], body)
             except TrackerError as e:
                 log.error("%s is created without its labels, files or links: %s", doc_id, e)
             self._refresh_after_write()
         return doc_id
+
+    def move_to_bucket(self, task_id: int, title: str) -> None:
+        """Moves the task into the bucket of that title on the project's Kanban board."""
+        key = re.sub(r"[^a-z]", "", title.lower())  # "To-Do" is "todo"
+        for view in self.api("GET", f"/projects/{self.config.project}/views") or []:
+            if view["view_kind"] != "kanban":
+                continue
+            path = f"/projects/{self.config.project}/views/{view['id']}"
+            for bucket in self.api("GET", f"{path}/tasks?per_page=1") or []:
+                if re.sub(r"[^a-z]", "", bucket["title"].lower()) == key:
+                    self.api("POST", f"{path}/buckets/{bucket['id']}/tasks", {"task_id": task_id})
+                    return
+        log.warning("The Kanban board has no bucket %r", title)
 
     def relate_mentions(self, task_id: int, text: str) -> None:
         """Links the task to every ticket the text names."""

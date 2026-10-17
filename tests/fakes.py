@@ -246,6 +246,8 @@ class FakeVikunja:
         self.labels = [{"id": 5, "title": "se1"}, {"id": 6, "title": "se2"}, {"id": 7, "title": "cancelled"}]
         self.labels.append({"id": 8, "title": "note"})
         self.auth: set[str] = set()
+        self.buckets = [{"id": 22, "title": "To-Do"}, {"id": 24, "title": "Done"}, {"id": 36, "title": "Notes"}]
+        self.bucket_of: dict[int, int] = {}
         self.per_page = 50
         """Like tasks.cometworks.se, whatever the request asks for."""
         fake = self
@@ -352,6 +354,14 @@ class FakeVikunja:
                         {"id": b["id"], "title": b["title"]}
                     )
                 return 201, data
+            case "GET", ["projects", _, "views"]:
+                return 200, [{"id": 31, "view_kind": "table"}, {"id": 32, "view_kind": "kanban"}]
+            case "GET", ["projects", _, "views", "32", "tasks"]:
+                tasks = lambda b: [t for i, t in self.tasks.items() if self.bucket_of.get(i, 22) == b["id"]]
+                return 200, [{**b, "tasks": tasks(b)} for b in self.buckets]
+            case "POST", ["projects", _, "views", "32", "buckets", bucket_id, "tasks"]:
+                self.bucket_of[json.loads(body)["task_id"]] = int(bucket_id)
+                return 200, {}
             case "GET", ["labels"]:
                 return 200, self._page(url, self.labels)
             case "PUT", ["tasks", task_id, "labels"]:

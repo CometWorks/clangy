@@ -120,6 +120,7 @@ def test_notes_are_tasks_with_the_note_label_linked_to_the_tickets_they_name(tra
     task = vikunja.tasks[3]
     assert task["title"] == "N-0024: Finding" and [l["title"] for l in task["labels"]] == ["se1", "note"]
     assert [x["id"] for x in task["related_tasks"]["related"]] == [1]
+    assert vikunja.bucket_of == {3: 36}
     text = (tmp_path / "notes" / "N-0024.md").read_text()
     assert "related: DIS-0017\n" in text and "status:" not in text
     assert "related: N-0024\n" in (tmp_path / "tickets" / "DIS-0017.md").read_text()

@@ -104,7 +104,7 @@ systemctl --user start clangy
 
 A note that holds a ticket's files becomes a comment on the ticket, the files its attachments. Other notes become note tasks, linked to the tickets they name and the tickets that name them. Large logs are attached gzipped; a rerun also swaps attachments an earlier run put up raw for gzipped copies. Rerunning it skips the tickets and notes Vikunja has.
 
-Notes stay off the Kanban board through the view's filter: `labels not in 8` (the `note` label's id) with `filter_include_nulls` on, so tickets without any label stay on the board. Set it in the web UI in the Kanban view's settings, or through `POST /projects/8/views/32` with a key that has the project views permission. Clangy's key and the developers' usual keys don't have it (HTTP 401).
+Notes go into the Kanban board's Notes bucket (id 36), apart from the tickets' To-Do, Doing and Done. The bucket has to exist; Clangy only moves tasks into it, and logs a warning if it's missing.
 
 ## Run
 

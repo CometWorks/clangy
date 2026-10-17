@@ -124,7 +124,9 @@ class TasksConfig(Strict):
     canceled_label: str = "cancelled"
     """A done task with this label is canceled, otherwise completed."""
     note_label: str = "note"
-    """Marks the tasks that are notes. The project's Kanban view should filter it out."""
+    """Marks the tasks that are notes."""
+    notes_bucket: str = "Notes"
+    """The Kanban bucket new notes go into."""
     first_number: int = 1
     """The DIS number of the first ticket when the project has none."""
     max_file_bytes: int = 20 * 1000**2
