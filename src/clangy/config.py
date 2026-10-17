@@ -113,7 +113,7 @@ class KnowledgeSource(Strict):
 
 
 class TasksConfig(Strict):
-    """A Vikunja project that holds the tickets instead of the workspace's tickets folder."""
+    """A Vikunja project that holds the tickets and notes instead of the workspace's folders."""
 
     url: str
     """The server, e.g. https://tasks.cometworks.se."""
@@ -128,14 +128,14 @@ class TasksConfig(Strict):
     notes_bucket: str = "Notes"
     """The Kanban bucket new notes go into."""
     first_number: int = 1
-    """The DIS number of the first ticket when the project has none."""
+    """The lowest DIS number a new ticket gets, e.g. to continue the workspace's numbers in an empty project."""
     max_file_bytes: int = 20 * 1000**2
     """The server's attachment limit (Vikunja's `files.maxsize`)."""
     gzip_min_bytes: int = 100 * 1024
     """Text files from this size on are attached gzipped, if that makes them at least 30% smaller."""
     timeout: float = 30.0
     refresh_interval: float = 300.0
-    """How often the sandbox's copy of the tickets is read again, besides after each of Clangy's own writes."""
+    """How often the sandbox's copy of the tickets and notes is read again, besides after Clangy's own writes."""
 
 
 class Config(Strict):
@@ -143,7 +143,7 @@ class Config(Strict):
     workspace_dir: Path | None = None
     """Tickets, notes and plans, kept past retention_days. Defaults to `<data_dir>/workspace`."""
     tasks: TasksConfig | None = None
-    """Tickets go to this Vikunja project. Without it they are files in the workspace."""
+    """Tickets and notes go to this Vikunja project. Without it they are files in the workspace."""
     discord_token: str = ""
     """Bot token; falls back to the DISCORD_TOKEN environment variable. Keep the file readable only by the bot."""
     backends: list[BackendConfig]

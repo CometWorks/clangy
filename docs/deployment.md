@@ -85,7 +85,7 @@ The host defaults to `clangy@nas`, another one can be given as the first argumen
 
 ## Vikunja
 
-The tickets are in the Support project (id 8) of https://tasks.cometworks.se. Clangy uses the `bot-clangy` account, which sees only that project. Its API key is `TASKS_PASS` in `~/.bashrc`, next to `TASKS_URL` and `TASKS_USER`; the unit doesn't load it, so Clangy reads it from an interactive bash. `~/clangy.toml` has:
+The tickets and notes are in the Support project (id 8) of https://tasks.cometworks.se. Clangy uses the `bot-clangy` account, which sees only that project. Its API key is `TASKS_PASS` in `~/.bashrc`, next to `TASKS_URL` and `TASKS_USER`; the unit doesn't load it, so Clangy reads it from an interactive bash. `~/clangy.toml` has:
 
 ```toml
 [tasks]
@@ -93,7 +93,7 @@ url = "https://tasks.cometworks.se"
 project = 8
 ```
 
-The switch from `tickets/`, once: deploy, stop the service, add `[tasks]`, copy the tickets in, start it again.
+The switch from `tickets/` and `notes/`, once: deploy, stop the service, add `[tasks]`, copy the tickets and notes in, start it again.
 
 ```bash
 systemctl --user stop clangy

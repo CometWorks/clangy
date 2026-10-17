@@ -124,10 +124,10 @@ async def check(config: Config, config_path: Path) -> bool:
             print(f"  {name} {source.link}: {links[source.link] or 'MISSING'}")
 
     if live.store.tracker is not None:
-        print("Tickets:")
+        print("Tracker:")
         try:
             count = await asyncio.to_thread(live.store.tracker.refresh)
-            print(f"  {count} in Vikunja project {config.tasks.project}")
+            print(f"  {count} tickets and notes in Vikunja project {config.tasks.project}")
         except StoreError as e:
             ok = False
             print(f"  FAILED: {e}")

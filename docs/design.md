@@ -188,11 +188,11 @@ Sent: the agent writes files in its work folder (by convention `out/`) and calls
 - keeps an answer within Discord's 10 attachments and `answer_max_bytes` in total;
 - stages the files in `files/outbox/`. If the run succeeds they move to `files/sent/<run number>/` and go out with the last part of the answer. If it fails they are dropped and can be sent again.
 
-`files/` is outside the sandbox's writable area, so everything received and sent stays even if the agent deletes its own copies, until the conversation expires (see Retention). Files a ticket needs are copied into the workspace, see Store.
+`files/` is outside the sandbox's writable area, so everything received and sent stays even if the agent deletes its own copies, until the conversation expires (see Retention). Files a ticket needs are copied into the workspace, or attached to its task in Vikunja, see Store.
 
 ## Store
 
-Tickets, notes and plans are for the developers, so they live in a workspace laid out like the developers' own (`workspace_dir`, the `clangy` home folder on the nas) and outlive the conversations:
+Tickets, notes and plans are for the developers, so they live in a workspace laid out like the developers' own (`workspace_dir`, the `clangy` home folder on the nas) and outlive the conversations. With `[tasks]` the tickets and notes are in Vikunja instead, see Tickets and notes in Vikunja below:
 
 - `AGENTS.md`: the rules for agents working in the workspace.
 - `tickets/DIS-0001.md`, with `Template.md`, and `completed/` and `canceled/` for the tickets developers have finished.
@@ -202,17 +202,17 @@ The host writes `AGENTS.md` and the template from `templates/` when they are mis
 
 Records of `record` channels hold message text and expire with the conversations, so they stay in `<data_dir>/records`.
 
-Without `[tasks]` (see Tickets in Vikunja below), the agent reads `tickets/`, `notes/`, `plans/` and the records through read-only links under `store/` and searches them with grep. Nothing else of the workspace is visible in the sandbox. Writes go through host tools, which assign numbers with exclusive file creation (tickets count `completed/` and `canceled/` too), validate the title (at most 120 characters) and body (at most 20000), and add the thread link and game to the frontmatter. A ticket's body goes under `# Description`, followed by an empty `# Work log` for the developer.
+Without `[tasks]` (see Tickets and notes in Vikunja below), the agent reads `tickets/`, `notes/`, `plans/` and the records through read-only links under `store/` and searches them with grep. Nothing else of the workspace is visible in the sandbox. Writes go through host tools, which assign numbers with exclusive file creation (tickets count `completed/` and `canceled/` too), validate the title (at most 120 characters) and body (at most 20000), and add the thread link and game to the frontmatter. A ticket's body goes under `# Description`, followed by an empty `# Work log` for the developer.
 
 `files` lists attachments (`attachments/...`) and files the agent wrote, each with what it shows. Hidden files and anything else outside the work folder are refused, as are files over `attachment_max_bytes`. A ticket's files are copied into a new note, `N-0001/` with `NOTE.md` listing each file, what it shows and who posted it when; the ticket's `notes:` frontmatter names the note. A note or plan with files gets its own folder for them.
 
 `ticket_add_report` adds a repeated report of the same problem to an open ticket as a `## Report` section above `# Work log`, its files in a new note linked the same way. A report on a completed or canceled ticket is refused: if the problem came back, the agent files a new ticket naming the old one.
 
-### Tickets in Vikunja
+### Tickets and notes in Vikunja
 
 With `[tasks]` configured, tickets and notes live in a Vikunja project (on the nas: Support) instead of `tickets/` and `notes/`, so developers work on them there. Plans and records stay in the workspace. The host calls the API in a thread, with an API key that reaches only that project.
 
-- A ticket is a task titled `DIS-0001: <title>`. The host assigns the number: one more than the highest in the project, done tasks included (`first_number` while it has none). Users were told the ids, so they are never reused.
+- A ticket is a task titled `DIS-0001: <title>`. The host assigns the number: one more than the highest in the project, done tasks included, but at least `first_number`. Users were told the ids, so they are never reused.
 - Its description starts with a list of the frontmatter fields (`created`, `thread`, `game`, `notes`), followed by the body as HTML from Markdown. The game is also a label.
 - Files are uploaded as the task's attachments and listed in the description or report. Text files (logs, Markdown) from `gzip_min_bytes` on that gzip to at most 70% of their size are attached gzipped as `<name>.gz`; binary files such as images stay as they are. A file over `max_file_bytes` (the server's limit) even then is refused like one over `attachment_max_bytes`, before anything is written.
 - A note is a task titled `N-0001: <title>` with the `note_label`, moved into the Kanban board's `notes_bucket`, so notes stay apart from the tickets but can be linked and hold attachments. Its number follows the highest in the project and in the workspace's `notes/`. It's linked (`related`) to every ticket its text names.

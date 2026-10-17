@@ -7,7 +7,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | Key | Default | Meaning |
 |---|---|---|
 | `data_dir` | required | Conversations, records and knowledge live here. |
-| `workspace_dir` | `<data_dir>/workspace` | Tickets, notes and plans, kept past `retention_days`. See design.md, Store. |
+| `workspace_dir` | `<data_dir>/workspace` | Tickets, notes and plans, kept past `retention_days`; with `tasks` only plans and the archive. See design.md, Store. |
 | `tasks` | none | A Vikunja project for the tickets, see `[tasks]`. Without it tickets are files in the workspace. |
 | `discord_token` | `""` | Bot token. Falls back to the `DISCORD_TOKEN` environment variable. Keep the config readable only by the bot's user. |
 | `context_window` | smallest backend `context_window` | Caps the context pi may use on every backend. A conversation can move to another backend between runs, so the default keeps it within the smallest one. |
@@ -49,7 +49,7 @@ Tickets and notes go to a Vikunja project instead of the workspace's `tickets/` 
 | `canceled_label` | `cancelled` | A done task with this label is canceled, otherwise completed. |
 | `note_label` | `note` | Marks the tasks that are notes. |
 | `notes_bucket` | `Notes` | The Kanban bucket new notes are moved into. Matched without case and punctuation; create it on the board first. |
-| `first_number` | `1` | The DIS number of the first ticket while the project has none. |
+| `first_number` | `1` | The lowest DIS number a new ticket gets, e.g. to continue the workspace's numbers in an empty project. |
 | `max_file_bytes` | 20 MB | The server's attachment limit (Vikunja's `files.maxsize`). Larger files, after gzipping, can't be kept with a ticket or note, and the tool call fails. |
 | `gzip_min_bytes` | 100 KiB | Text files (no NUL byte in the first 8 KiB) from this size on are attached gzipped (`info.log.gz`) when that makes them at least 30% smaller. Images stay as they are, so Vikunja still previews them. |
 | `timeout` | `30` | Seconds per API request. |

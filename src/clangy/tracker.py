@@ -1,4 +1,4 @@
-"""Tickets in a Vikunja project, and their read-only Markdown mirror for the sandbox.
+"""Tickets and notes in a Vikunja project, and their read-only Markdown copies for the sandbox.
 
 Adapted from the Ticket Manager's `vklib.py`. Calls block, so the host runs them in a thread.
 """
@@ -111,10 +111,10 @@ class Tracker:
     Notes carry the note label and go into the Kanban board's notes bucket, out of the way of the tickets.
     """
 
-    def __init__(self, config: TasksConfig, mirror: Path, notes_mirror: Path):
+    def __init__(self, config: TasksConfig, tickets_mirror: Path, notes_mirror: Path):
         self.config = config
         self.url = config.url.rstrip("/")
-        self.mirror = mirror
+        self.tickets_mirror = tickets_mirror
         self.notes_mirror = notes_mirror
         self._key: str | None = config.api_key
         self._lock = threading.RLock()
@@ -347,7 +347,7 @@ class Tracker:
     def _refresh(self) -> None:
         # Files are replaced one by one: a running sandbox has the folders themselves mounted
         tasks = [(m[1], m[3], t) for t in self.tasks() if (m := TITLE_RE.match(t["title"]))]
-        for folder in (self.mirror, *(self.mirror / c for c in CLOSED), self.notes_mirror):
+        for folder in (self.tickets_mirror, *(self.tickets_mirror / c for c in CLOSED), self.notes_mirror):
             folder.mkdir(parents=True, exist_ok=True)
         written = set()
         for doc_id, title, task in tasks:
@@ -355,7 +355,7 @@ class Tracker:
                 path, status = self.notes_mirror / f"{doc_id}.md", None
             else:
                 status = "open" if not task["done"] else "canceled" if self._canceled(task) else "completed"
-                path = self.mirror / ("" if status == "open" else status) / f"{doc_id}.md"
+                path = self.tickets_mirror / ("" if status == "open" else status) / f"{doc_id}.md"
             write_file(path, self._document(doc_id, title, status, task))
             written.add(path)
         for path in [*self._mirrored(), *self.notes_mirror.glob("N-[0-9][0-9][0-9][0-9].md")]:
@@ -381,5 +381,7 @@ class Tracker:
 
     def _mirrored(self) -> list[Path]:
         return [
-            p for d in (self.mirror, *(self.mirror / c for c in CLOSED)) for p in d.glob("DIS-[0-9][0-9][0-9][0-9].md")
+            p
+            for d in (self.tickets_mirror, *(self.tickets_mirror / c for c in CLOSED))
+            for p in d.glob("DIS-[0-9][0-9][0-9][0-9].md")
         ]

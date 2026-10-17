@@ -132,7 +132,7 @@ class History:
 
 class Store:
     def __init__(self, root: Path, records: Path, tracker: "Tracker | None" = None):
-        """With a tracker, tickets live there instead of in the workspace."""
+        """With a tracker, tickets and notes live there instead of in the workspace."""
         self.root = root
         self.records = records
         self.tracker = tracker
@@ -156,7 +156,8 @@ class Store:
     ) -> str:
         """Writes a new document with the next free number and returns its id.
 
-        A note or plan with files gets its own folder for them. A ticket's files go into a new note it links to.
+        A note or plan with files gets its own folder for them. A ticket's files go into a new note it links to. With a
+        tracker, tickets and notes go there and their files become attachments.
         `by` is the user who asked for it, for the history.
         """
         if kind in ("ticket", "note") and self.tracker is not None:
@@ -175,7 +176,7 @@ class Store:
     def add_report(
         self, ticket_id: str, body: str, meta: dict[str, str], files: list[KeptFile] = (), by: str = ""
     ) -> None:
-        """Adds a repeated report of the same problem to an open ticket, above the work log."""
+        """Adds a repeated report of the same problem to an open ticket, above the work log (the tracker: a comment)."""
         if not ID_RE.match(ticket_id) or not ticket_id.startswith("DIS-"):
             raise StoreError(f"not a ticket id: {ticket_id}")
         if self.tracker is not None:
@@ -222,7 +223,7 @@ class Store:
     @property
     def tickets_dir(self) -> Path:
         """The tickets the sandbox reads: the workspace's, or the tracker's mirror."""
-        return self.tracker.mirror if self.tracker is not None else self.root / "tickets"
+        return self.tracker.tickets_mirror if self.tracker is not None else self.root / "tickets"
 
     @property
     def notes_dir(self) -> Path:
