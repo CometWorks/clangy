@@ -129,7 +129,7 @@ class TasksConfig(Strict):
     """The DIS number of the first ticket when the project has none."""
     max_file_bytes: int = 20 * 1000**2
     """The server's attachment limit (Vikunja's `files.maxsize`)."""
-    gzip_min_bytes: int = 256 * 1024
+    gzip_min_bytes: int = 100 * 1024
     """Text files from this size on are attached gzipped, if that makes them at least 30% smaller."""
     timeout: float = 30.0
     refresh_interval: float = 300.0

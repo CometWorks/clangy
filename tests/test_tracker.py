@@ -140,3 +140,18 @@ def test_large_text_is_gzipped_and_too_large_files_stop_the_write(tracker, vikun
     with pytest.raises(StoreError, match="shot.png is larger than"):
         tracker.create("ticket", "Crash", "Body", {}, [(image, "Screenshot")])
     assert len(vikunja.tasks) == 1
+
+
+def test_reads_every_page_past_the_servers_cap(tracker, vikunja):
+    for number in range(1, 121):
+        vikunja.add(f"DIS-{number:04d}: Crash {number}")
+    assert tracker.create("ticket", "Next", "Body", {}) == "DIS-0121"
+    assert len(tracker.ticket_threads()) == 0 and tracker.refresh() == 121
+
+
+def test_an_upload_vikunja_refuses_is_an_error(tracker, vikunja, tmp_path):
+    vikunja.add("DIS-0001: Crash")
+    rejected = tmp_path / "reject.log"
+    rejected.write_text("x")
+    with pytest.raises(StoreError, match="Vikunja didn't take reject.log"):
+        tracker.add_report("DIS-0001", "Again", {}, [(rejected, "Log")])

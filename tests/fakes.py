@@ -246,6 +246,8 @@ class FakeVikunja:
         self.labels = [{"id": 5, "title": "se1"}, {"id": 6, "title": "se2"}, {"id": 7, "title": "cancelled"}]
         self.labels.append({"id": 8, "title": "note"})
         self.auth: set[str] = set()
+        self.per_page = 50
+        """Like tasks.cometworks.se, whatever the request asks for."""
         fake = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -300,14 +302,17 @@ class FakeVikunja:
         self.comments[task_id] = []
         return task
 
+    def _page(self, url: str, items: list) -> list:
+        page = int(m[1]) if (m := re.search(r"[?&]page=(\d+)", url)) else 1
+        return items[(page - 1) * self.per_page : page * self.per_page]
+
     def handle(self, method: str, url: str, body: bytes, headers) -> tuple[int, object]:
         self.auth.add(headers.get("Authorization", ""))
         path = url.split("?")[0].removeprefix("/api/v1")
         parts = path.strip("/").split("/")
         match method, parts:
             case "GET", ["tasks"]:
-                page = int(re.search(r"[?&]page=(\d+)", url)[1])
-                return 200, list(self.tasks.values())[(page - 1) * 250 : page * 250]
+                return 200, self._page(url, list(self.tasks.values()))
             case "PUT", ["projects", project, "tasks"] if int(project) == self.project:
                 data = json.loads(body)
                 return 200, self.add(data["title"], data["description"])
@@ -319,14 +324,17 @@ class FakeVikunja:
                 self.tasks[int(task_id)].update(json.loads(body))
                 return 200, self.tasks[int(task_id)]
             case "GET", ["tasks", task_id, "comments"]:
-                return 200, self.comments[int(task_id)]
+                return 200, self.comments[int(task_id)]  # No pages, like Vikunja 2.7
             case "PUT", ["tasks", task_id, "comments"]:
                 comment = {"comment": json.loads(body)["comment"], "author": {"username": "bot-clangy"}}
+                comment["id"] = sum(len(c) for c in self.comments.values()) + 1
                 comment["created"] = f"2026-10-17T12:00:{len(self.comments[int(task_id)]):02d}Z"
                 self.comments[int(task_id)].append(comment)
                 return 201, comment
             case "PUT", ["tasks", task_id, "attachments"]:
                 name = re.search(rb'filename="([^"]*)"', body)[1].decode()
+                if name.startswith("reject"):
+                    return 200, {"errors": [{"message": "file too large"}], "success": None}
                 content = body.split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n--", 1)[0]
                 self.uploads.append((int(task_id), name, content))
                 attachment = {"id": len(self.uploads), "file": {"name": name, "size": len(content)}}
@@ -345,7 +353,7 @@ class FakeVikunja:
                     )
                 return 201, data
             case "GET", ["labels"]:
-                return 200, self.labels
+                return 200, self._page(url, self.labels)
             case "PUT", ["tasks", task_id, "labels"]:
                 label_id = json.loads(body)["label_id"]
                 self.tasks[int(task_id)]["labels"] += [l for l in self.labels if l["id"] == label_id]

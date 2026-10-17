@@ -151,7 +151,7 @@ class Tracker:
     def packed(self, data: bytes, name: str) -> tuple[bytes, str]:
         """The file as it is attached: gzipped if it's large text that compresses well, like a log."""
         if len(data) >= self.config.gzip_min_bytes and b"\0" not in data[:8192]:  # Images keep their preview
-            packed = gzip.compress(data, mtime=0)
+            packed = gzip.compress(data, 9, mtime=0)
             if len(packed) <= len(data) * 0.7:
                 data, name = packed, name + ".gz"
         if len(data) > self.config.max_file_bytes:
@@ -173,31 +173,41 @@ class Tracker:
             "Content-Type: application/octet-stream\r\n\r\n"
         )
         data = head.encode() + content + f"\r\n--{boundary}--\r\n".encode()
-        self.api(
+        result = self.api(
             "PUT", f"/tasks/{task_id}/attachments", data=data, content_type=f"multipart/form-data; boundary={boundary}"
         )
+        # A failed upload can still answer HTTP 200
+        if errors := (result or {}).get("errors"):
+            raise TrackerError(f"Vikunja didn't take {name}: {errors}")
 
     # Vikunja objects
 
-    def tasks(self) -> list[dict]:
-        """Every task of the project, open and done."""
-        out, page = [], 1
+    def paged(self, path: str) -> list[dict]:
+        """Every item of a list endpoint. The server caps per_page (50 on tasks.cometworks.se), so this reads pages
+        until one is empty, or repeats what came already, as an endpoint without pages does."""
+        out, seen, page = [], set(), 1
         while True:
-            batch = self.api("GET", f"/tasks?per_page=250&page={page}") or []
-            out.extend(batch)
-            if len(batch) < 250:
-                return [t for t in out if t["project_id"] == self.config.project]
+            batch = self.api("GET", f"{path}?per_page=250&page={page}") or []
+            new = [item for item in batch if item["id"] not in seen]
+            if not new:
+                return out
+            out.extend(new)
+            seen.update(item["id"] for item in new)
             page += 1
 
+    def tasks(self) -> list[dict]:
+        """Every task of the project, open and done."""
+        return [t for t in self.paged("/tasks") if t["project_id"] == self.config.project]
+
     def comments(self, task_id: int) -> list[dict]:
-        return self.api("GET", f"/tasks/{task_id}/comments?per_page=250") or []
+        return self.paged(f"/tasks/{task_id}/comments")
 
     def comment(self, task_id: int, markup: str) -> None:
         self.api("PUT", f"/tasks/{task_id}/comments", {"comment": markup})
 
     def label(self, task_id: int, title: str) -> None:
         if self._labels is None:
-            self._labels = {l["title"]: l["id"] for l in self.api("GET", "/labels?per_page=250") or []}
+            self._labels = {l["title"]: l["id"] for l in self.paged("/labels")}
         if title in self._labels:
             try:
                 self.api("PUT", f"/tasks/{task_id}/labels", {"label_id": self._labels[title]})
