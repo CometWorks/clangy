@@ -104,15 +104,7 @@ systemctl --user start clangy
 
 A note that holds a ticket's files becomes a comment on the ticket, the files its attachments. Other notes become note tasks, linked to the tickets they name and the tickets that name them. Large logs are attached gzipped; a rerun also swaps attachments an earlier run put up raw for gzipped copies. Rerunning it skips the tickets and notes Vikunja has.
 
-Notes stay off the Kanban board through the view's filter. Clangy's key can't change views; with the project owner's key:
-
-```bash
-curl -s -H "Authorization: Bearer $TASKS_PASS" "$TASKS_URL/api/v1/projects/8/views/32" > kanban.json
-jq '.filter = {"filter": "labels not in <note label id>", "filter_include_nulls": true}' kanban.json > kanban-new.json
-curl -s -X POST -H "Authorization: Bearer $TASKS_PASS" -H "Content-Type: application/json" -d @kanban-new.json "$TASKS_URL/api/v1/projects/8/views/32"
-```
-
-`filter_include_nulls` keeps the tickets without any label on the board.
+Notes stay off the Kanban board through the view's filter: `labels not in 8` (the `note` label's id) with `filter_include_nulls` on, so tickets without any label stay on the board. Set it in the web UI in the Kanban view's settings, or through `POST /projects/8/views/32` with a key that has the project views permission. Clangy's key and the developers' usual keys don't have it (HTTP 401).
 
 ## Run
 
