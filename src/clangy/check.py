@@ -10,6 +10,7 @@ from pathlib import Path
 from clangy.config import ChannelConfig, Config
 from clangy.core import Clangy, IncomingMessage, proxy_relay
 from clangy.runner import RunPaths, RunSpec, build_command
+from clangy.store import StoreError
 
 PROBE = """
 import json, os, shutil, socket
@@ -121,6 +122,15 @@ async def check(config: Config, config_path: Path) -> bool:
         for source in sources:
             ok &= links[source.link] is not None
             print(f"  {name} {source.link}: {links[source.link] or 'MISSING'}")
+
+    if live.store.tracker is not None:
+        print("Tickets:")
+        try:
+            count = await asyncio.to_thread(live.store.tracker.refresh)
+            print(f"  {count} in Vikunja project {config.tasks.project}")
+        except StoreError as e:
+            ok = False
+            print(f"  FAILED: {e}")
 
     print("Python environment:")
     venv = await live.python_env()

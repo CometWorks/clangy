@@ -10,6 +10,11 @@ hidden_skills = ["se-dev-plugin-review"]
 # Caps the context on every backend; unset means the smallest backend context_window
 # context_window = 131072
 
+# Tickets go to the Support project; the API key is TASKS_PASS from ~/.bashrc
+[tasks]
+url = "https://tasks.cometworks.se"
+project = 8
+
 [sandbox]
 firejail = true
 pi_command = ["/home/clangy/.pi/agent/bin/pi"]

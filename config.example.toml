@@ -17,6 +17,11 @@ hidden_skills = ["se-dev-plugin-review"]
 # Caps the context on every backend; unset means the smallest backend context_window
 # context_window = 131072
 
+# Tickets in a Vikunja project instead of <workspace_dir>/tickets; the key comes from TASKS_PASS
+# [tasks]
+# url = "https://tasks.example.com"
+# project = 8
+
 [sandbox]
 firejail = true
 pi_command = ["pi"]

@@ -135,6 +135,7 @@ class ClangyClient(discord.Client):
         await self.core.load()
         self.loop.create_task(self.core.monitor_backends())
         self.loop.create_task(self.core.watch_outbox())
+        self.loop.create_task(self.core.watch_tracker())
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s", self.user)

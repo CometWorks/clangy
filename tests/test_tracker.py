@@ -1,0 +1,108 @@
+import pytest
+
+from clangy.config import TasksConfig
+from clangy.store import Store, StoreError, frontmatter
+from clangy.tracker import Tracker, header_html, parse_header, to_text
+from tests.fakes import FakeVikunja
+
+THREAD = "https://discord.com/channels/1/1015"
+
+
+@pytest.fixture
+def vikunja():
+    fake = FakeVikunja()
+    yield fake
+    fake.close()
+
+
+@pytest.fixture
+def tracker(vikunja, tmp_path):
+    return Tracker(TasksConfig(url=vikunja.url, project=8, api_key="key"), tmp_path / "tickets")
+
+
+def test_create_numbers_after_the_highest_ticket_and_keeps_files(tracker, vikunja, tmp_path):
+    vikunja.add("DIS-0030: Old crash", done=True)
+    vikunja.add("Not a ticket of Clangy's")
+    log = tmp_path / "1015-info.log"
+    log.write_bytes(b"log data")
+    meta = {"thread": THREAD, "game": "se1"}
+    doc_id = tracker.create("Crash\non load", "## Summary\n\nIt *crashes*.", meta, [(log, "Pulsar log (posted)")])
+    assert doc_id == "DIS-0031"
+    task = vikunja.tasks[3]
+    assert task["title"] == "DIS-0031: Crash on load"
+    assert [l["title"] for l in task["labels"]] == ["se1"]
+    assert vikunja.uploads == [(3, "1015-info.log", b"log data")]
+    assert "<h2>Summary</h2>" in task["description"] and "<em>crashes</em>" in task["description"]
+    assert vikunja.auth == {"Bearer key"}
+    meta = frontmatter((tmp_path / "tickets" / "DIS-0031.md").read_text())[0]
+    assert meta["thread"] == THREAD and meta["game"] == "se1" and meta["status"] == "open"
+    assert meta["url"] == f"{vikunja.url}/tasks/3"
+    assert (tmp_path / "tickets" / "completed" / "DIS-0030.md").exists()
+
+
+def test_first_number_starts_an_empty_project(tracker, vikunja):
+    tracker.config.first_number = 7
+    assert tracker.create("Crash", "Body", {}) == "DIS-0007"
+
+
+def test_reports_go_to_open_tickets_only(tracker, vikunja):
+    vikunja.add("DIS-0001: Open", header_html({"thread": THREAD}))
+    vikunja.add("DIS-0002: Fixed", done=True)
+    vikunja.add("DIS-0003: Dropped", done=True, labels=("cancelled",))
+    tracker.add_report("DIS-0001", "Same here", {"thread": "https://discord.com/channels/1/2000"})
+    [comment] = vikunja.comments[1]
+    assert comment["comment"].startswith("<p><strong>Report</strong></p><ul>")
+    assert "Same here" in comment["comment"] and "channels/1/2000" in comment["comment"]
+    with pytest.raises(StoreError, match="DIS-0002 is completed. If the problem came back"):
+        tracker.add_report("DIS-0002", "Again", {})
+    with pytest.raises(StoreError, match="DIS-0003 is canceled"):
+        tracker.add_report("DIS-0003", "Again", {})
+    with pytest.raises(StoreError, match="no such ticket: DIS-0009"):
+        tracker.add_report("DIS-0009", "Again", {})
+
+
+def test_mirror_follows_the_tracker(tracker, vikunja, tmp_path):
+    task = vikunja.add("DIS-0001: Crash", header_html({"thread": THREAD, "game": "se2"}) + "<p>Details</p>")
+    tracker.refresh()
+    text = (tmp_path / "tickets" / "DIS-0001.md").read_text()
+    assert "\n# Description\n\nDetails\n" in text
+    assert tracker.ticket_threads() == {"DIS-0001": THREAD}
+    tracker.log_work("DIS-0001", "Fixed in Bugfixes 1.7.0 <b>now</b>")
+    text = (tmp_path / "tickets" / "DIS-0001.md").read_text()
+    assert "## bot-clangy at 2026-10-17T12:00:00Z\n\nWork log\n\nFixed in Bugfixes 1.7.0 <b>now</b>" in text
+    task["done"] = True
+    tracker.refresh()
+    assert not (tmp_path / "tickets" / "DIS-0001.md").exists()
+    assert (tmp_path / "tickets" / "completed" / "DIS-0001.md").exists()
+    assert tracker.ticket_threads() == {"DIS-0001": THREAD}
+
+
+def test_store_hands_tickets_to_the_tracker(tracker, vikunja, tmp_path):
+    store = Store(tmp_path / "workspace", tmp_path / "records", tracker)
+    assert store.create("ticket", "Crash", "Body", {"thread": THREAD}) == "DIS-0001"
+    assert store.create("note", "A note", "Body", {}) == "N-0001"
+    store.add_report("DIS-0001", "Again", {})
+    assert store.tickets_dir == tmp_path / "tickets"
+    assert not (tmp_path / "workspace" / "tickets").exists()
+    with pytest.raises(StoreError, match="not a ticket id"):
+        store.add_report("../x", "Again", {})
+
+
+def test_html_in_reports_is_escaped(tracker, vikunja):
+    tracker.create("Crash", "Look: <script>alert(1)</script> and `a < b`", {})
+    description = vikunja.tasks[1]["description"]
+    assert "<script>" not in description and "&lt;script&gt;" in description and "<code>a &lt; b</code>" in description
+
+
+def test_header_round_trip():
+    meta = {"created": "2026-10-17T12:00:00Z", "thread": THREAD, "game": "se1", "ignored": "x"}
+    assert parse_header(header_html(meta)) == {k: v for k, v in meta.items() if k != "ignored"}
+    assert to_text("<h1>Logs</h1><p>a<br>b</p><ul><li>x</li></ul><pre><code>1 &lt; 2</code></pre>") == (
+        "# Logs\n\na\nb\n\n- x\n\n1 < 2"
+    )
+
+
+def test_api_errors_become_store_errors(tracker, vikunja):
+    tracker.config.project = 4
+    with pytest.raises(StoreError, match="HTTP 403"):
+        tracker.create("Crash", "Body", {})

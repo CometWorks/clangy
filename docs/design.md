@@ -15,6 +15,7 @@ Clangy v2 is a Python host process that connects to Discord and runs one short-l
 | `proxy.py` | Per-run HTTP server on a unix socket inside the work folder: forwards chat completions to the run's backend, detects backend failures, and serves the host tools. |
 | `runner.py` | Writes pi's config, builds the firejail command line, runs pi with a deadline, reads its JSON event stream, and replaces the answer in pi's session when the host shortened it. |
 | `store.py` | Tickets, notes and plans in the workspace, and the records of `record` channels. |
+| `tracker.py` | Tickets in a Vikunja project instead, and their Markdown copy for the sandbox. |
 | `knowledge.py` | The daily sync of knowledge kept in git repositories. |
 | `cache.py` | The local message cache (`messages.sqlite`). |
 | `timings.py` | `clangy timings`, the summary of `metrics.jsonl`. |
@@ -201,11 +202,25 @@ The host writes `AGENTS.md` and the template from `templates/` when they are mis
 
 Records of `record` channels hold message text and expire with the conversations, so they stay in `<data_dir>/records`.
 
-The agent reads `tickets/`, `notes/`, `plans/` and the records through read-only links under `store/` and searches them with grep. Nothing else of the workspace is visible in the sandbox. Writes go through host tools, which assign numbers with exclusive file creation (tickets count `completed/` and `canceled/` too), validate the title (at most 120 characters) and body (at most 20000), and add the thread link and game to the frontmatter. A ticket's body goes under `# Description`, followed by an empty `# Work log` for the developer.
+Without `[tasks]` (see Tickets in Vikunja below), the agent reads `tickets/`, `notes/`, `plans/` and the records through read-only links under `store/` and searches them with grep. Nothing else of the workspace is visible in the sandbox. Writes go through host tools, which assign numbers with exclusive file creation (tickets count `completed/` and `canceled/` too), validate the title (at most 120 characters) and body (at most 20000), and add the thread link and game to the frontmatter. A ticket's body goes under `# Description`, followed by an empty `# Work log` for the developer.
 
 `files` lists attachments (`attachments/...`) and files the agent wrote, each with what it shows. Hidden files and anything else outside the work folder are refused, as are files over `attachment_max_bytes`. A ticket's files are copied into a new note, `N-0001/` with `NOTE.md` listing each file, what it shows and who posted it when; the ticket's `notes:` frontmatter names the note. A note or plan with files gets its own folder for them.
 
 `ticket_add_report` adds a repeated report of the same problem to an open ticket as a `## Report` section above `# Work log`, its files in a new note linked the same way. A report on a completed or canceled ticket is refused: if the problem came back, the agent files a new ticket naming the old one.
+
+### Tickets in Vikunja
+
+With `[tasks]` configured, tickets live in a Vikunja project (on the nas: Support) instead of `tickets/`, so developers work on them there. Notes, plans and records stay in the workspace. The host calls the API in a thread, with an API key that reaches only that project.
+
+- A ticket is a task titled `DIS-0001: <title>`. The host assigns the number: one more than the highest in the project, done tasks included (`first_number` while it has none). Users were told the ids, so they are never reused.
+- Its description starts with a list of the frontmatter fields (`created`, `thread`, `game`, `notes`), followed by the body as HTML from Markdown. The game is also a label.
+- Files are uploaded as the task's attachments and listed in the description or report. Over `max_file_bytes` (the server's limit) they are refused like ones over `attachment_max_bytes`.
+- `ticket_add_report` adds a `Report` comment, with the thread and time, to an open task. On a done task it's refused; a done task with the `canceled_label` is canceled, otherwise completed.
+- A post from the outbox adds a `Work log` comment.
+
+The sandbox's `store/tickets` links to `<data_dir>/tickets`, a Markdown copy of the project the host writes: open tickets at the top, done ones in `completed/` and `canceled/`, each with the frontmatter, the description, the attachment names and the comments. The host rewrites it at startup, every `refresh_interval`, and after each of its own writes, file by file, since a running sandbox has the folder mounted. If Vikunja can't be read, the old copy stays.
+
+`scripts/migrate-tickets-to-vikunja.py` copied the workspace's tickets in once, see deployment.md. The workspace's `tickets/` folder stays as it was, an archive.
 
 The workspace has a git history, so a deleted or overwritten document can be brought back. Its repository is `.history.git` in the workspace root, outside anything the sandbox can see, and only the host commits to it. Every write by a host tool is a commit by Clangy that names the Discord user who asked and the thread. Edits made by hand on the host go into a separate "Changes made outside Clangy" commit before the next write, and at startup. Only `AGENTS.md`, `tickets/`, `notes/` and `plans/` are tracked, since the workspace may be a home folder. If the repository has an `origin` remote, every commit is pushed there in the background. A failed commit or push is logged and doesn't stop the write. To bring a file back: `git --git-dir=.history.git --work-tree=. checkout <commit> -- <path>`.
 

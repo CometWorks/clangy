@@ -1,7 +1,10 @@
-"""Offline stand-ins for Discord and the inference backend."""
+"""Offline stand-ins for Discord, the inference backend and Vikunja."""
 
 import asyncio
+import http.server
 import json
+import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -230,3 +233,103 @@ class FakeSquid:
         writer.write(f"HTTP/1.1 {status}\r\n\r\n".encode())
         await writer.drain()
         writer.close()
+
+
+class FakeVikunja:
+    """The part of Vikunja's API the tracker uses, on a local port, in a thread of its own."""
+
+    def __init__(self, project: int = 8) -> None:
+        self.project = project
+        self.tasks: dict[int, dict] = {}
+        self.comments: dict[int, list[dict]] = {}
+        self.uploads: list[tuple[int, str, bytes]] = []
+        self.labels = [{"id": 5, "title": "se1"}, {"id": 6, "title": "se2"}, {"id": 7, "title": "cancelled"}]
+        self.auth: set[str] = set()
+        fake = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args) -> None:
+                pass
+
+            def do_GET(self) -> None:
+                self._reply(fake.handle("GET", self.path, b"", self.headers))
+
+            def do_PUT(self) -> None:
+                self._reply(fake.handle("PUT", self.path, self._body(), self.headers))
+
+            def do_POST(self) -> None:
+                self._reply(fake.handle("POST", self.path, self._body(), self.headers))
+
+            def _body(self) -> bytes:
+                return self.rfile.read(int(self.headers.get("Content-Length", 0)))
+
+            def _reply(self, result: tuple[int, object]) -> None:
+                status, body = result
+                data = json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+    def add(self, title: str, description: str = "", done: bool = False, labels: tuple[str, ...] = ()) -> dict:
+        task_id = len(self.tasks) + 1
+        task = {
+            "id": task_id,
+            "project_id": self.project,
+            "title": title,
+            "description": description,
+            "done": done,
+            "labels": [l for l in self.labels if l["title"] in labels],
+            "attachments": [],
+        }
+        self.tasks[task_id] = task
+        self.comments[task_id] = []
+        return task
+
+    def handle(self, method: str, url: str, body: bytes, headers) -> tuple[int, object]:
+        self.auth.add(headers.get("Authorization", ""))
+        path = url.split("?")[0].removeprefix("/api/v1")
+        parts = path.strip("/").split("/")
+        match method, parts:
+            case "GET", ["tasks"]:
+                page = int(re.search(r"[?&]page=(\d+)", url)[1])
+                return 200, list(self.tasks.values())[(page - 1) * 250 : page * 250]
+            case "PUT", ["projects", project, "tasks"] if int(project) == self.project:
+                data = json.loads(body)
+                return 200, self.add(data["title"], data["description"])
+            case "PUT", ["projects", _, "tasks"]:
+                return 403, {"code": 3001, "message": "Forbidden"}
+            case "GET", ["tasks", task_id] if int(task_id) in self.tasks:
+                return 200, self.tasks[int(task_id)]
+            case "POST", ["tasks", task_id] if int(task_id) in self.tasks:
+                self.tasks[int(task_id)].update(json.loads(body))
+                return 200, self.tasks[int(task_id)]
+            case "GET", ["tasks", task_id, "comments"]:
+                return 200, self.comments[int(task_id)]
+            case "PUT", ["tasks", task_id, "comments"]:
+                comment = {"comment": json.loads(body)["comment"], "author": {"username": "bot-clangy"}}
+                comment["created"] = f"2026-10-17T12:00:{len(self.comments[int(task_id)]):02d}Z"
+                self.comments[int(task_id)].append(comment)
+                return 201, comment
+            case "PUT", ["tasks", task_id, "attachments"]:
+                name = re.search(rb'filename="([^"]*)"', body)[1].decode()
+                content = body.split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n--", 1)[0]
+                self.uploads.append((int(task_id), name, content))
+                self.tasks[int(task_id)]["attachments"].append({"file": {"name": name}})
+                return 200, {"success": [{"file": {"name": name}}]}
+            case "GET", ["labels"]:
+                return 200, self.labels
+            case "PUT", ["tasks", task_id, "labels"]:
+                label_id = json.loads(body)["label_id"]
+                self.tasks[int(task_id)]["labels"] += [l for l in self.labels if l["id"] == label_id]
+                return 201, {"label_id": label_id}
+        return 404, {"code": 1, "message": f"no route {method} {path}"}
