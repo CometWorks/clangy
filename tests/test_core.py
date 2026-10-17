@@ -12,11 +12,12 @@ import aiohttp
 import pytest
 
 from clangy import core, text
-from clangy.config import BackendConfig, ChannelConfig, Config, KnowledgeSource
+from clangy.config import BackendConfig, ChannelConfig, Config, KnowledgeSource, TasksConfig
 from clangy.core import Attachment, Clangy, Conversation, IncomingMessage
 from clangy.proxy import short_path
 from clangy.runner import RunResult, RunSpec
 from clangy.store import frontmatter
+from tests.fakes import FakeVikunja
 
 GUILD = 1
 SUPPORT, QUIET_FORUM, RECORD, MENTION, SE1_FORUM, SLOW_FORUM = 10, 20, 30, 40, 50, 60
@@ -1417,3 +1418,38 @@ async def test_failed_post_can_be_queued_again(bot, chat, monkeypatch):
     queue(bot, "reply", "DIS-0001", "Fixed.")
     await bot.send_posts()
     assert len(chat.in_channel(1166)) == 1
+
+
+async def test_tickets_go_to_vikunja_when_configured(chat, config):
+    vikunja = FakeVikunja()
+    try:
+        tasks = TasksConfig(url=vikunja.url, project=8, api_key="key")
+        bot = Clangy(config.model_copy(update={"tasks": tasks}), chat, run_agent=FakeAgent())
+        chat.files["https://cdn/info.log"] = b"log data"
+        files = [{"path": "attachments/1170-info.log", "about": "Pulsar log"}]
+        bot.run_agent.script = [
+            tool("ticket_create", {"title": "Crash on load", "body": "Details", "files": files}, answer("Filed."))
+        ]
+        attachment = Attachment(1, "info.log", 8, "https://cdn/info.log")
+        await bot.on_message(forum_post(SE1_FORUM, 1170, "Crash", attachments=[attachment]))
+        await bot.wait_idle()
+        assert bot.run_agent.tool_results == [(200, {"text": "Created DIS-0001."})]
+        assert vikunja.tasks[1]["title"] == "DIS-0001: Crash on load"
+        assert vikunja.uploads == [(1, "1170-info.log", b"log data")]
+        work = bot.run_agent.specs[0].paths.work
+        assert (work / "store" / "tickets").resolve() == (config.data_dir / "tickets").resolve()
+        assert "thread: " + thread_url(1170) in (work / "store" / "tickets" / "DIS-0001.md").read_text()
+        assert not (config.data_dir / "workspace" / "tickets").exists()
+        assert (work / "store" / "notes").resolve() == (config.data_dir / "notes").resolve()
+
+        chat.parents[1170] = SE1_FORUM
+        queue(bot, "DIS-0001-fixed", "DIS-0001", "Fixed in Bugfixes 1.7.0.")
+        await bot.send_posts()
+        [post] = [m for m in chat.in_channel(1170) if "Bugfixes" in m.content]
+        [comment] = vikunja.comments[1]
+        assert f"Clangy posted DIS-0001-fixed from the outbox in the thread: {thread_url(1170)}/{post.message_id}" in (
+            comment["comment"]
+        )
+        await bot.close()
+    finally:
+        vikunja.close()

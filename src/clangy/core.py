@@ -25,6 +25,7 @@ from clangy.files import FileError, Outbox, safe_filename
 from clangy.messages import Attachment, IncomingMessage
 from clangy.proxy import HostServer, ProxyRun, RunStats, TcpRelay, ToolError
 from clangy.runner import PACKAGE_DIR, RunPaths, RunResult, RunSpec, free_port, replace_answer, run_pi, write_pi_config
+from clangy.tracker import Tracker
 from clangy.store import KeptFile, Store, StoreError, document, frontmatter, utc_now, write_file
 
 log = logging.getLogger(__name__)
@@ -214,7 +215,10 @@ class Clangy:
         self.config = config
         self.chat = chat
         self.run_agent = run_agent
-        self.store = Store(config.workspace_dir or config.data_dir / "workspace", config.data_dir / "records")
+        tracker = (
+            Tracker(config.tasks, config.data_dir / "tickets", config.data_dir / "notes") if config.tasks else None
+        )
+        self.store = Store(config.workspace_dir or config.data_dir / "workspace", config.data_dir / "records", tracker)
         self.backends = {b.name: Backend(b) for b in config.backends}
         self.conversations: dict[int, Conversation] = {}
         self._workers: dict[int, asyncio.Task] = {}
@@ -969,7 +973,9 @@ class Clangy:
             store.unlink()
         links = {
             "attachments": received.resolve(),
-            **{f"store/{name}": (self.store.root / name).resolve() for name in ("tickets", "notes", "plans")},
+            "store/tickets": self.store.tickets_dir.resolve(),
+            "store/notes": self.store.notes_dir.resolve(),
+            "store/plans": (self.store.root / "plans").resolve(),
             "store/records": self.store.records.resolve(),
             "guide": GUIDE_DIR,
         }
@@ -1054,6 +1060,8 @@ class Clangy:
     def _tool_handler(self, conv: Conversation) -> Callable[[str, dict], Awaitable[str]]:
         async def handle(name: str, params: dict) -> str:
             try:
+                if name.startswith("ticket_") or name == "note_create":  # The tracker blocks on HTTP
+                    return await asyncio.to_thread(self._tool, conv, name, params)
                 return self._tool(conv, name, params)
             except (StoreError, FileError, KeyError, TypeError) as e:
                 raise ToolError(str(e)) from e
@@ -1100,8 +1108,9 @@ class Clangy:
                 raise FileError(f"{path} is neither an attachment nor in your work folder")
             if not source.is_file():
                 raise FileError(f"{path} is not a file")
-            if source.stat().st_size > self.config.attachment_max_bytes:
-                raise FileError(f"{path} is larger than {human_size(self.config.attachment_max_bytes)}")
+            limit = self.config.attachment_max_bytes  # The tracker checks its own limit after gzipping
+            if source.stat().st_size > limit:
+                raise FileError(f"{path} is larger than {human_size(limit)}")
             kept.append((source, f"{about} ({origin})" if about else origin.capitalize()))
         return kept
 
@@ -1229,6 +1238,17 @@ class Clangy:
             self.save(conv)
             self.trigger(conv)
 
+    async def watch_tracker(self) -> None:
+        """Keeps the sandbox's copy of the tracker's tickets current, so the agent finds duplicates."""
+        if self.store.tracker is None:
+            return
+        while True:
+            try:
+                await asyncio.to_thread(self.store.tracker.refresh)
+            except StoreError as e:
+                log.warning("Tickets not refreshed: %s", e)
+            await asyncio.sleep(self.config.tasks.refresh_interval)
+
     # Messages from the developers
 
     @property
@@ -1295,7 +1315,8 @@ class Clangy:
             self.save(conv)
         for ticket_id in ticket_ids:
             line = f"{utc_now()}: Clangy posted {name} from the outbox in the thread: {link}"
-            self.store.log_work(ticket_id, line, f"Post {name} in the thread of {ticket_id}", {"thread": url})
+            subject = f"Post {name} in the thread of {ticket_id}"
+            await asyncio.to_thread(self.store.log_work, ticket_id, line, subject, {"thread": url})
 
     def _post_thread(self, to: str) -> tuple[list[str], str]:
         """The tickets and the link of the thread a post goes to: a ticket's, or one Clangy has a conversation,

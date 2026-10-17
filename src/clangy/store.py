@@ -8,6 +8,7 @@ import subprocess
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 KINDS = {"ticket": ("tickets", "DIS", ""), "note": ("notes", "N", "NOTE.md"), "plan": ("plans", "P", "PLAN.md")}
 """Folder, id prefix, and the main file of a document that has its own folder for its files."""
@@ -21,6 +22,9 @@ HISTORY = ".history.git"
 """The workspace's git repository, in its root, which the sandbox can't see. Only the host commits."""
 TRACKED = "/*\n!/AGENTS.md\n!/tickets/\n!/notes/\n!/plans/\n*.tmp\n"
 """Ignore rules of the history: the workspace root may be a home folder."""
+
+if TYPE_CHECKING:
+    from clangy.tracker import Tracker
 
 log = logging.getLogger(__name__)
 
@@ -127,16 +131,21 @@ class History:
 
 
 class Store:
-    def __init__(self, root: Path, records: Path):
+    def __init__(self, root: Path, records: Path, tracker: "Tracker | None" = None):
+        """With a tracker, tickets and notes live there instead of in the workspace."""
         self.root = root
         self.records = records
-        for folder, _, _ in KINDS.values():
-            (root / folder).mkdir(parents=True, exist_ok=True)
-        for folder in CLOSED:
-            (root / "tickets" / folder).mkdir(exist_ok=True)
+        self.tracker = tracker
+        for kind, (folder, _, _) in KINDS.items():
+            if kind == "plan" or tracker is None:
+                (root / folder).mkdir(parents=True, exist_ok=True)
+        if tracker is None:
+            for folder in CLOSED:
+                (root / "tickets" / folder).mkdir(exist_ok=True)
         records.mkdir(parents=True, exist_ok=True)
         # Humans maintain these once they exist
-        for source, target in (("agents.md", "AGENTS.md"), ("ticket.md", "tickets/Template.md")):
+        templates = [("agents.md", "AGENTS.md")] + ([("ticket.md", "tickets/Template.md")] if tracker is None else [])
+        for source, target in templates:
             if not (root / target).exists():
                 shutil.copyfile(TEMPLATES / source, root / target)
         self.history = History(root)
@@ -147,9 +156,12 @@ class Store:
     ) -> str:
         """Writes a new document with the next free number and returns its id.
 
-        A note or plan with files gets its own folder for them. A ticket's files go into a new note it links to.
+        A note or plan with files gets its own folder for them. A ticket's files go into a new note it links to. With a
+        tracker, tickets and notes go there and their files become attachments.
         `by` is the user who asked for it, for the history.
         """
+        if kind in ("ticket", "note") and self.tracker is not None:
+            return self.tracker.create(kind, title, body, meta, files, first_number=self._next_number("note"))
         title, body = _check_text(title, body)
         self.history.commit("Changes made outside Clangy")
         if kind != "ticket":
@@ -164,9 +176,11 @@ class Store:
     def add_report(
         self, ticket_id: str, body: str, meta: dict[str, str], files: list[KeptFile] = (), by: str = ""
     ) -> None:
-        """Adds a repeated report of the same problem to an open ticket, above the work log."""
+        """Adds a repeated report of the same problem to an open ticket, above the work log (the tracker: a comment)."""
         if not ID_RE.match(ticket_id) or not ticket_id.startswith("DIS-"):
             raise StoreError(f"not a ticket id: {ticket_id}")
+        if self.tracker is not None:
+            return self.tracker.add_report(ticket_id, body, meta, files)
         tickets = self.root / "tickets"
         path = tickets / f"{ticket_id}.md"
         if not path.exists():
@@ -191,16 +205,29 @@ class Store:
 
     def ticket_threads(self) -> dict[str, str]:
         """The thread link of every ticket, open or closed."""
+        if self.tracker is not None:
+            return self.tracker.ticket_threads()
         return {p.stem: meta["thread"] for p in self._tickets() if "thread" in (meta := frontmatter(p.read_text())[0])}
 
     def log_work(self, ticket_id: str, line: str, subject: str, meta: dict[str, str]) -> None:
         """Adds a line to the end of a ticket's work log, open or closed, with `subject` for the history."""
+        if self.tracker is not None:
+            return self.tracker.log_work(ticket_id, line)
         path = next((p for p in self._tickets() if p.stem == ticket_id), None)
         if path is None:
             raise StoreError(f"no such ticket: {ticket_id}")
         self.history.commit("Changes made outside Clangy")
         write_file(path, path.read_text().rstrip("\n") + f"\n- {_one_line(line)}\n")
         self.history.commit(_message(subject, "", meta))
+
+    @property
+    def tickets_dir(self) -> Path:
+        """The tickets the sandbox reads: the workspace's, or the tracker's mirror."""
+        return self.tracker.tickets_mirror if self.tracker is not None else self.root / "tickets"
+
+    @property
+    def notes_dir(self) -> Path:
+        return self.tracker.notes_mirror if self.tracker is not None else self.root / "notes"
 
     def _tickets(self) -> list[Path]:
         tickets = self.root / "tickets"
@@ -231,13 +258,19 @@ class Store:
         write_file(path, "\n".join(lines) + sep + rest)
         return note_id
 
-    def _write(self, kind: str, title: str, body: str, meta: dict[str, str], files: list[KeptFile] = ()) -> str:
-        folder, prefix, main = KINDS[kind]
+    def _next_number(self, kind: str) -> int:
+        """One more than the highest number in the workspace's folder of that kind."""
+        folder, prefix, _ = KINDS[kind]
         directory = self.root / folder
         searched = [directory, *(directory / c for c in CLOSED if kind == "ticket")]
         start = len(prefix) + 1
         taken = (p.name[start : start + 4] for d in searched for p in d.glob(f"{prefix}-[0-9][0-9][0-9][0-9]*"))
-        number = 1 + max((int(n) for n in taken), default=0)
+        return 1 + max((int(n) for n in taken), default=0)
+
+    def _write(self, kind: str, title: str, body: str, meta: dict[str, str], files: list[KeptFile] = ()) -> str:
+        folder, prefix, main = KINDS[kind]
+        directory = self.root / folder
+        number = self._next_number(kind)
         if files:
             body += "\n\n# Files\n\n" + "".join(f"- `{target}`: {line}\n" for target, line in _targets(files))
         while True:

@@ -7,7 +7,8 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | Key | Default | Meaning |
 |---|---|---|
 | `data_dir` | required | Conversations, records and knowledge live here. |
-| `workspace_dir` | `<data_dir>/workspace` | Tickets, notes and plans, kept past `retention_days`. See design.md, Store. |
+| `workspace_dir` | `<data_dir>/workspace` | Tickets, notes and plans, kept past `retention_days`; with `tasks` only plans and the archive. See design.md, Store. |
+| `tasks` | none | A Vikunja project for the tickets, see `[tasks]`. Without it tickets are files in the workspace. |
 | `discord_token` | `""` | Bot token. Falls back to the `DISCORD_TOKEN` environment variable. Keep the config readable only by the bot's user. |
 | `context_window` | smallest backend `context_window` | Caps the context pi may use on every backend. A conversation can move to another backend between runs, so the default keeps it within the smallest one. |
 | `headers` | pi's attribution | Sent with every backend's chat completion requests: `HTTP-Referer = "https://pi.dev"`, `X-OpenRouter-Title = "pi"`, `X-OpenRouter-Categories = "cli-agent"`. OpenRouter serves some free models, such as `thinkingmachines/inkling:free`, only to agent harnesses it lists and answers 403 otherwise. pi sends this itself only when it talks to OpenRouter directly; here it talks to the proxy. A backend's `headers` override single keys. |
@@ -34,6 +35,25 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `proxy` | none | `host:port` of an HTTP proxy with a domain allowlist the sandbox may use, e.g. a local squid. Unset means no network at all. |
 | `uv` | `uv` | uv on the host. It builds the sandboxes' shared Python environment (see design.md, Sandbox). The systemd unit's `PATH` lacks `~/.local/bin`, so the nas gives the full path. |
 | `python` | `python3` | Interpreter of that environment. It must be readable in the sandbox. |
+
+## `[tasks]`
+
+Tickets and notes go to a Vikunja project instead of the workspace's `tickets/` and `notes/` folders. Plans stay in the workspace. See design.md, Store.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `url` | required | The Vikunja server, e.g. `https://tasks.cometworks.se`. |
+| `project` | required | Id of the project that holds the tickets. The nas: 8, Support. |
+| `api_key` | none | An API key with access to that project only. Keep the config readable only by the bot's user. |
+| `api_key_env` | `TASKS_PASS` | Variable with the key, used when `api_key` is unset. If the service's environment lacks it, Clangy reads it from an interactive bash, since `~/.bashrc` exports it only there. The key never enters the sandbox. |
+| `canceled_label` | `cancelled` | A done task with this label is canceled, otherwise completed. |
+| `note_label` | `note` | Marks the tasks that are notes. |
+| `notes_bucket` | `Notes` | The Kanban bucket new notes are moved into. Matched without case and punctuation; create it on the board first. |
+| `first_number` | `1` | The lowest DIS number a new ticket gets, e.g. to continue the workspace's numbers in an empty project. |
+| `max_file_bytes` | 20 MB | The server's attachment limit (Vikunja's `files.maxsize`). Larger files, after gzipping, can't be kept with a ticket or note, and the tool call fails. |
+| `gzip_min_bytes` | 100 KiB | Text files (no NUL byte in the first 8 KiB) from this size on are attached gzipped (`info.log.gz`) when that makes them at least 30% smaller. Images stay as they are, so Vikunja still previews them. |
+| `timeout` | `30` | Seconds per API request. |
+| `refresh_interval` | `300` | How often the sandbox's copy of the tickets and notes is read again. Clangy's own writes refresh it right away. |
 
 ## `[[backends]]`
 

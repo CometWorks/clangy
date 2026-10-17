@@ -1,7 +1,10 @@
-"""Offline stand-ins for Discord and the inference backend."""
+"""Offline stand-ins for Discord, the inference backend and Vikunja."""
 
 import asyncio
+import http.server
 import json
+import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -230,3 +233,139 @@ class FakeSquid:
         writer.write(f"HTTP/1.1 {status}\r\n\r\n".encode())
         await writer.drain()
         writer.close()
+
+
+class FakeVikunja:
+    """The part of Vikunja's API the tracker uses, on a local port, in a thread of its own."""
+
+    def __init__(self, project: int = 8) -> None:
+        self.project = project
+        self.tasks: dict[int, dict] = {}
+        self.comments: dict[int, list[dict]] = {}
+        self.uploads: list[tuple[int, str, bytes]] = []
+        self.labels = [{"id": 5, "title": "se1"}, {"id": 6, "title": "se2"}, {"id": 7, "title": "cancelled"}]
+        self.labels.append({"id": 8, "title": "note"})
+        self.auth: set[str] = set()
+        self.buckets = [{"id": 22, "title": "To-Do"}, {"id": 24, "title": "Done"}, {"id": 36, "title": "Notes"}]
+        self.bucket_of: dict[int, int] = {}
+        self.per_page = 50
+        """Like tasks.cometworks.se, whatever the request asks for."""
+        fake = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args) -> None:
+                pass
+
+            def do_GET(self) -> None:
+                self._reply(fake.handle("GET", self.path, b"", self.headers))
+
+            def do_PUT(self) -> None:
+                self._reply(fake.handle("PUT", self.path, self._body(), self.headers))
+
+            def do_DELETE(self) -> None:
+                self._reply(fake.handle("DELETE", self.path, b"", self.headers))
+
+            def do_POST(self) -> None:
+                self._reply(fake.handle("POST", self.path, self._body(), self.headers))
+
+            def _body(self) -> bytes:
+                return self.rfile.read(int(self.headers.get("Content-Length", 0)))
+
+            def _reply(self, result: tuple[int, object]) -> None:
+                status, body = result
+                data = json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+    def add(self, title: str, description: str = "", done: bool = False, labels: tuple[str, ...] = ()) -> dict:
+        task_id = len(self.tasks) + 1
+        task = {
+            "id": task_id,
+            "project_id": self.project,
+            "title": title,
+            "description": description,
+            "done": done,
+            "labels": [l for l in self.labels if l["title"] in labels],
+            "attachments": [],
+            "related_tasks": {},
+        }
+        self.tasks[task_id] = task
+        self.comments[task_id] = []
+        return task
+
+    def _page(self, url: str, items: list) -> list:
+        page = int(m[1]) if (m := re.search(r"[?&]page=(\d+)", url)) else 1
+        return items[(page - 1) * self.per_page : page * self.per_page]
+
+    def handle(self, method: str, url: str, body: bytes, headers) -> tuple[int, object]:
+        self.auth.add(headers.get("Authorization", ""))
+        path = url.split("?")[0].removeprefix("/api/v1")
+        parts = path.strip("/").split("/")
+        match method, parts:
+            case "GET", ["tasks"]:
+                return 200, self._page(url, list(self.tasks.values()))
+            case "PUT", ["projects", project, "tasks"] if int(project) == self.project:
+                data = json.loads(body)
+                return 200, self.add(data["title"], data["description"])
+            case "PUT", ["projects", _, "tasks"]:
+                return 403, {"code": 3001, "message": "Forbidden"}
+            case "GET", ["tasks", task_id] if int(task_id) in self.tasks:
+                return 200, self.tasks[int(task_id)]
+            case "POST", ["tasks", task_id] if int(task_id) in self.tasks:
+                self.tasks[int(task_id)].update(json.loads(body))
+                return 200, self.tasks[int(task_id)]
+            case "GET", ["tasks", task_id, "comments"]:
+                return 200, self.comments[int(task_id)]  # No pages, like Vikunja 2.7
+            case "PUT", ["tasks", task_id, "comments"]:
+                comment = {"comment": json.loads(body)["comment"], "author": {"username": "bot-clangy"}}
+                comment["id"] = sum(len(c) for c in self.comments.values()) + 1
+                comment["created"] = f"2026-10-17T12:00:{len(self.comments[int(task_id)]):02d}Z"
+                self.comments[int(task_id)].append(comment)
+                return 201, comment
+            case "PUT", ["tasks", task_id, "attachments"]:
+                name = re.search(rb'filename="([^"]*)"', body)[1].decode()
+                if name.startswith("reject"):
+                    return 200, {"errors": [{"message": "file too large"}], "success": None}
+                content = body.split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n--", 1)[0]
+                self.uploads.append((int(task_id), name, content))
+                attachment = {"id": len(self.uploads), "file": {"name": name, "size": len(content)}}
+                self.tasks[int(task_id)]["attachments"].append(attachment)
+                return 200, {"success": [{"file": {"name": name}}]}
+            case "DELETE", ["tasks", task_id, "attachments", attachment_id]:
+                task = self.tasks[int(task_id)]
+                task["attachments"] = [a for a in task["attachments"] if a["id"] != int(attachment_id)]
+                return 200, {"message": "Successfully deleted."}
+            case "PUT", ["tasks", task_id, "relations"]:
+                data = json.loads(body)
+                task, other = self.tasks[int(task_id)], self.tasks[data["other_task_id"]]
+                for a, b in ((task, other), (other, task)):
+                    a["related_tasks"].setdefault(data["relation_kind"], []).append(
+                        {"id": b["id"], "title": b["title"]}
+                    )
+                return 201, data
+            case "GET", ["projects", _, "views"]:
+                return 200, [{"id": 31, "view_kind": "table"}, {"id": 32, "view_kind": "kanban"}]
+            case "GET", ["projects", _, "views", "32", "tasks"]:
+                tasks = lambda b: [t for i, t in self.tasks.items() if self.bucket_of.get(i, 22) == b["id"]]
+                return 200, [{**b, "tasks": tasks(b)} for b in self.buckets]
+            case "POST", ["projects", _, "views", "32", "buckets", bucket_id, "tasks"]:
+                self.bucket_of[json.loads(body)["task_id"]] = int(bucket_id)
+                return 200, {}
+            case "GET", ["labels"]:
+                return 200, self._page(url, self.labels)
+            case "PUT", ["tasks", task_id, "labels"]:
+                label_id = json.loads(body)["label_id"]
+                self.tasks[int(task_id)]["labels"] += [l for l in self.labels if l["id"] == label_id]
+                return 201, {"label_id": label_id}
+        return 404, {"code": 1, "message": f"no route {method} {path}"}

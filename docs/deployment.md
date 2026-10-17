@@ -10,7 +10,7 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 ├── clangy.toml              the config, from deploy/clangy.toml; mode 600, deploys never touch it
 ├── AGENTS.md                rules for agents working in the workspace, written once from templates/
 ├── .history.git/            git history of AGENTS.md, tickets/, notes/ and plans/, see design.md, Store
-├── tickets/                 problem reports for the developers, see design.md, Store
+├── tickets/                 problem reports until 2026-10-17, now in Vikunja; see design.md, Store
 │   ├── Template.md          written once from templates/
 │   ├── DIS-0001.md
 │   ├── completed/
@@ -28,6 +28,7 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 │   │   ├── files/           received/, sent/<run>/, outbox/
 │   │   └── work/            the sandbox's work folder
 │   ├── records/<thread id>.md
+│   ├── tickets/, notes/     copy of the Vikunja tickets and notes the sandbox reads, rewritten by the host
 │   ├── outbox/              posts queued by developers, with sent/ and failed/
 │   ├── messages.sqlite      message cache
 │   ├── python/<hash>/       the sandboxes' Python environment
@@ -81,6 +82,29 @@ deploy/deploy.sh
 ```
 
 The host defaults to `clangy@nas`, another one can be given as the first argument. It rsyncs the working copy (without `.git`, `.venv`, `data/` and a local `config.toml`), runs `uv sync`, links and enables `deploy/clangy.service`, and restarts the service if it's running.
+
+## Vikunja
+
+The tickets and notes are in the Support project (id 8) of https://tasks.cometworks.se. Clangy uses the `bot-clangy` account, which sees only that project. Its API key is `TASKS_PASS` in `~/.bashrc`, next to `TASKS_URL` and `TASKS_USER`; the unit doesn't load it, so Clangy reads it from an interactive bash. `~/clangy.toml` has:
+
+```toml
+[tasks]
+url = "https://tasks.cometworks.se"
+project = 8
+```
+
+The switch from `tickets/` and `notes/`, once: deploy, stop the service, add `[tasks]`, copy the tickets and notes in, start it again.
+
+```bash
+systemctl --user stop clangy
+cd ~/clangy && .venv/bin/python scripts/migrate-tickets-to-vikunja.py --config ~/clangy.toml --dry-run
+cd ~/clangy && .venv/bin/python scripts/migrate-tickets-to-vikunja.py --config ~/clangy.toml
+systemctl --user start clangy
+```
+
+A note that holds a ticket's files becomes a comment on the ticket, the files its attachments. Other notes become note tasks, linked to the tickets they name and the tickets that name them. Large logs are attached gzipped; a rerun also swaps attachments an earlier run put up raw for gzipped copies. Rerunning it skips the tickets and notes Vikunja has.
+
+Notes go into the Kanban board's Notes bucket (id 36), apart from the tickets' To-Do, Doing and Done. The bucket has to exist; Clangy only moves tasks into it, and logs a warning if it's missing.
 
 ## Run
 
