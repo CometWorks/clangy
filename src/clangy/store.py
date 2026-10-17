@@ -137,7 +137,7 @@ class Store:
         self.records = records
         self.tracker = tracker
         for kind, (folder, _, _) in KINDS.items():
-            if kind != "ticket" or tracker is None:
+            if kind == "plan" or tracker is None:
                 (root / folder).mkdir(parents=True, exist_ok=True)
         if tracker is None:
             for folder in CLOSED:
@@ -159,8 +159,8 @@ class Store:
         A note or plan with files gets its own folder for them. A ticket's files go into a new note it links to.
         `by` is the user who asked for it, for the history.
         """
-        if kind == "ticket" and self.tracker is not None:
-            return self.tracker.create(title, body, meta, files)
+        if kind in ("ticket", "note") and self.tracker is not None:
+            return self.tracker.create(kind, title, body, meta, files, first_number=self._next_number("note"))
         title, body = _check_text(title, body)
         self.history.commit("Changes made outside Clangy")
         if kind != "ticket":
@@ -224,6 +224,10 @@ class Store:
         """The tickets the sandbox reads: the workspace's, or the tracker's mirror."""
         return self.tracker.mirror if self.tracker is not None else self.root / "tickets"
 
+    @property
+    def notes_dir(self) -> Path:
+        return self.tracker.notes_mirror if self.tracker is not None else self.root / "notes"
+
     def _tickets(self) -> list[Path]:
         tickets = self.root / "tickets"
         return [p for d in (tickets, *(tickets / c for c in CLOSED)) for p in d.glob("DIS-[0-9][0-9][0-9][0-9].md")]
@@ -253,13 +257,19 @@ class Store:
         write_file(path, "\n".join(lines) + sep + rest)
         return note_id
 
-    def _write(self, kind: str, title: str, body: str, meta: dict[str, str], files: list[KeptFile] = ()) -> str:
-        folder, prefix, main = KINDS[kind]
+    def _next_number(self, kind: str) -> int:
+        """One more than the highest number in the workspace's folder of that kind."""
+        folder, prefix, _ = KINDS[kind]
         directory = self.root / folder
         searched = [directory, *(directory / c for c in CLOSED if kind == "ticket")]
         start = len(prefix) + 1
         taken = (p.name[start : start + 4] for d in searched for p in d.glob(f"{prefix}-[0-9][0-9][0-9][0-9]*"))
-        number = 1 + max((int(n) for n in taken), default=0)
+        return 1 + max((int(n) for n in taken), default=0)
+
+    def _write(self, kind: str, title: str, body: str, meta: dict[str, str], files: list[KeptFile] = ()) -> str:
+        folder, prefix, main = KINDS[kind]
+        directory = self.root / folder
+        number = self._next_number(kind)
         if files:
             body += "\n\n# Files\n\n" + "".join(f"- `{target}`: {line}\n" for target, line in _targets(files))
         while True:

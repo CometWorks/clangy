@@ -38,7 +38,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 
 ## `[tasks]`
 
-Tickets go to a Vikunja project instead of the workspace's `tickets/` folder. Notes and plans stay in the workspace. See design.md, Store.
+Tickets and notes go to a Vikunja project instead of the workspace's `tickets/` and `notes/` folders. Plans stay in the workspace. See design.md, Store.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -47,10 +47,12 @@ Tickets go to a Vikunja project instead of the workspace's `tickets/` folder. No
 | `api_key` | none | An API key with access to that project only. Keep the config readable only by the bot's user. |
 | `api_key_env` | `TASKS_PASS` | Variable with the key, used when `api_key` is unset. If the service's environment lacks it, Clangy reads it from an interactive bash, since `~/.bashrc` exports it only there. The key never enters the sandbox. |
 | `canceled_label` | `cancelled` | A done task with this label is canceled, otherwise completed. |
+| `note_label` | `note` | Marks the tasks that are notes. Filter it out of the project's Kanban view, see deployment.md. |
 | `first_number` | `1` | The DIS number of the first ticket while the project has none. |
-| `max_file_bytes` | 20 MB | The server's attachment limit (Vikunja's `files.maxsize`). Larger files can't be kept with a ticket. |
+| `max_file_bytes` | 20 MB | The server's attachment limit (Vikunja's `files.maxsize`). Larger files, after gzipping, can't be kept with a ticket or note, and the tool call fails. |
+| `gzip_min_bytes` | 256 KiB | Files from this size on are attached gzipped (`info.log.gz`) when that makes them at least 30% smaller, which logs and other text are and images and archives aren't. |
 | `timeout` | `30` | Seconds per API request. |
-| `refresh_interval` | `300` | How often the sandbox's copy of the tickets is read again. Clangy's own writes refresh it right away. |
+| `refresh_interval` | `300` | How often the sandbox's copy of the tickets and notes is read again. Clangy's own writes refresh it right away. |
 
 ## `[[backends]]`
 

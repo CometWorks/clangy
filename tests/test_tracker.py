@@ -1,3 +1,6 @@
+import gzip
+import os
+
 import pytest
 
 from clangy.config import TasksConfig
@@ -17,7 +20,7 @@ def vikunja():
 
 @pytest.fixture
 def tracker(vikunja, tmp_path):
-    return Tracker(TasksConfig(url=vikunja.url, project=8, api_key="key"), tmp_path / "tickets")
+    return Tracker(TasksConfig(url=vikunja.url, project=8, api_key="key"), tmp_path / "tickets", tmp_path / "notes")
 
 
 def test_create_numbers_after_the_highest_ticket_and_keeps_files(tracker, vikunja, tmp_path):
@@ -26,7 +29,9 @@ def test_create_numbers_after_the_highest_ticket_and_keeps_files(tracker, vikunj
     log = tmp_path / "1015-info.log"
     log.write_bytes(b"log data")
     meta = {"thread": THREAD, "game": "se1"}
-    doc_id = tracker.create("Crash\non load", "## Summary\n\nIt *crashes*.", meta, [(log, "Pulsar log (posted)")])
+    doc_id = tracker.create(
+        "ticket", "Crash\non load", "## Summary\n\nIt *crashes*.", meta, [(log, "Pulsar log (posted)")]
+    )
     assert doc_id == "DIS-0031"
     task = vikunja.tasks[3]
     assert task["title"] == "DIS-0031: Crash on load"
@@ -42,7 +47,7 @@ def test_create_numbers_after_the_highest_ticket_and_keeps_files(tracker, vikunj
 
 def test_first_number_starts_an_empty_project(tracker, vikunja):
     tracker.config.first_number = 7
-    assert tracker.create("Crash", "Body", {}) == "DIS-0007"
+    assert tracker.create("ticket", "Crash", "Body", {}) == "DIS-0007"
 
 
 def test_reports_go_to_open_tickets_only(tracker, vikunja):
@@ -89,7 +94,7 @@ def test_store_hands_tickets_to_the_tracker(tracker, vikunja, tmp_path):
 
 
 def test_html_in_reports_is_escaped(tracker, vikunja):
-    tracker.create("Crash", "Look: <script>alert(1)</script> and `a < b`", {})
+    tracker.create("ticket", "Crash", "Look: <script>alert(1)</script> and `a < b`", {})
     description = vikunja.tasks[1]["description"]
     assert "<script>" not in description and "&lt;script&gt;" in description and "<code>a &lt; b</code>" in description
 
@@ -105,4 +110,34 @@ def test_header_round_trip():
 def test_api_errors_become_store_errors(tracker, vikunja):
     tracker.config.project = 4
     with pytest.raises(StoreError, match="HTTP 403"):
-        tracker.create("Crash", "Body", {})
+        tracker.create("ticket", "Crash", "Body", {})
+
+
+def test_notes_are_tasks_with_the_note_label_linked_to_the_tickets_they_name(tracker, vikunja, tmp_path):
+    vikunja.add("DIS-0017: Aliases")
+    vikunja.add("N-0011: Old note")
+    note = tracker.create("note", "Finding", "Same as DIS-0017, not DIS-0099.", {"game": "se1"}, first_number=24)
+    assert note == "N-0024"
+    task = vikunja.tasks[3]
+    assert task["title"] == "N-0024: Finding" and [l["title"] for l in task["labels"]] == ["se1", "note"]
+    assert [x["id"] for x in task["related_tasks"]["related"]] == [1]
+    text = (tmp_path / "notes" / "N-0024.md").read_text()
+    assert "related: DIS-0017\n" in text and "status:" not in text
+    assert "related: N-0024\n" in (tmp_path / "tickets" / "DIS-0017.md").read_text()
+    assert tracker.create("note", "Next", "Body", {}, first_number=1) == "N-0025"
+    assert tracker.create("ticket", "Crash", "Body", {}) == "DIS-0018"
+
+
+def test_large_text_is_gzipped_and_too_large_files_stop_the_write(tracker, vikunja, tmp_path):
+    log, image = tmp_path / "info.log", tmp_path / "shot.png"
+    log.write_text("2026-10-17 INFO all good\n" * 20000)
+    image.write_bytes(os.urandom(300 * 1024))
+    tracker.create("ticket", "Crash", "Body", {}, [(log, "Pulsar log"), (image, "Screenshot")])
+    (_, log_name, packed), (_, image_name, raw) = vikunja.uploads
+    assert log_name == "info.log.gz" and gzip.decompress(packed) == log.read_bytes()
+    assert image_name == "shot.png" and raw == image.read_bytes()
+    assert "<code>info.log.gz</code>: Pulsar log" in vikunja.tasks[1]["description"]
+    tracker.config.max_file_bytes = 100 * 1024
+    with pytest.raises(StoreError, match="shot.png is larger than"):
+        tracker.create("ticket", "Crash", "Body", {}, [(image, "Screenshot")])
+    assert len(vikunja.tasks) == 1

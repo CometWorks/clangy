@@ -215,7 +215,9 @@ class Clangy:
         self.config = config
         self.chat = chat
         self.run_agent = run_agent
-        tracker = Tracker(config.tasks, config.data_dir / "tickets") if config.tasks else None
+        tracker = (
+            Tracker(config.tasks, config.data_dir / "tickets", config.data_dir / "notes") if config.tasks else None
+        )
         self.store = Store(config.workspace_dir or config.data_dir / "workspace", config.data_dir / "records", tracker)
         self.backends = {b.name: Backend(b) for b in config.backends}
         self.conversations: dict[int, Conversation] = {}
@@ -972,7 +974,8 @@ class Clangy:
         links = {
             "attachments": received.resolve(),
             "store/tickets": self.store.tickets_dir.resolve(),
-            **{f"store/{name}": (self.store.root / name).resolve() for name in ("notes", "plans")},
+            "store/notes": self.store.notes_dir.resolve(),
+            "store/plans": (self.store.root / "plans").resolve(),
             "store/records": self.store.records.resolve(),
             "guide": GUIDE_DIR,
         }
@@ -1057,7 +1060,7 @@ class Clangy:
     def _tool_handler(self, conv: Conversation) -> Callable[[str, dict], Awaitable[str]]:
         async def handle(name: str, params: dict) -> str:
             try:
-                if name.startswith("ticket_"):  # The tracker blocks on HTTP
+                if name.startswith("ticket_") or name == "note_create":  # The tracker blocks on HTTP
                     return await asyncio.to_thread(self._tool, conv, name, params)
                 return self._tool(conv, name, params)
             except (StoreError, FileError, KeyError, TypeError) as e:
@@ -1105,9 +1108,7 @@ class Clangy:
                 raise FileError(f"{path} is neither an attachment nor in your work folder")
             if not source.is_file():
                 raise FileError(f"{path} is not a file")
-            limit = self.config.attachment_max_bytes
-            if self.config.tasks:
-                limit = min(limit, self.config.tasks.max_file_bytes)
+            limit = self.config.attachment_max_bytes  # The tracker checks its own limit after gzipping
             if source.stat().st_size > limit:
                 raise FileError(f"{path} is larger than {human_size(limit)}")
             kept.append((source, f"{about} ({origin})" if about else origin.capitalize()))

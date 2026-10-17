@@ -1440,6 +1440,7 @@ async def test_tickets_go_to_vikunja_when_configured(chat, config):
         assert (work / "store" / "tickets").resolve() == (config.data_dir / "tickets").resolve()
         assert "thread: " + thread_url(1170) in (work / "store" / "tickets" / "DIS-0001.md").read_text()
         assert not (config.data_dir / "workspace" / "tickets").exists()
+        assert (work / "store" / "notes").resolve() == (config.data_dir / "notes").resolve()
 
         chat.parents[1170] = SE1_FORUM
         queue(bot, "DIS-0001-fixed", "DIS-0001", "Fixed in Bugfixes 1.7.0.")

@@ -28,7 +28,7 @@ Clangy runs as a systemd user service of the `clangy` user on the nas. There is 
 │   │   ├── files/           received/, sent/<run>/, outbox/
 │   │   └── work/            the sandbox's work folder
 │   ├── records/<thread id>.md
-│   ├── tickets/             copy of the Vikunja tickets the sandbox reads, rewritten by the host
+│   ├── tickets/, notes/     copy of the Vikunja tickets and notes the sandbox reads, rewritten by the host
 │   ├── outbox/              posts queued by developers, with sent/ and failed/
 │   ├── messages.sqlite      message cache
 │   ├── python/<hash>/       the sandboxes' Python environment
@@ -102,7 +102,17 @@ cd ~/clangy && .venv/bin/python scripts/migrate-tickets-to-vikunja.py --config ~
 systemctl --user start clangy
 ```
 
-A ticket's notes become comments, and their files attachments. Rerunning it skips the tickets Vikunja has.
+A note that holds a ticket's files becomes a comment on the ticket, the files its attachments. Other notes become note tasks, linked to the tickets they name and the tickets that name them. Large logs are attached gzipped; a rerun also swaps attachments an earlier run put up raw for gzipped copies. Rerunning it skips the tickets and notes Vikunja has.
+
+Notes stay off the Kanban board through the view's filter. Clangy's key can't change views; with the project owner's key:
+
+```bash
+curl -s -H "Authorization: Bearer $TASKS_PASS" "$TASKS_URL/api/v1/projects/8/views/32" > kanban.json
+jq '.filter = {"filter": "labels not in <note label id>", "filter_include_nulls": true}' kanban.json > kanban-new.json
+curl -s -X POST -H "Authorization: Bearer $TASKS_PASS" -H "Content-Type: application/json" -d @kanban-new.json "$TASKS_URL/api/v1/projects/8/views/32"
+```
+
+`filter_include_nulls` keeps the tickets without any label on the board.
 
 ## Run
 

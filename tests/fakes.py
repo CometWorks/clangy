@@ -244,6 +244,7 @@ class FakeVikunja:
         self.comments: dict[int, list[dict]] = {}
         self.uploads: list[tuple[int, str, bytes]] = []
         self.labels = [{"id": 5, "title": "se1"}, {"id": 6, "title": "se2"}, {"id": 7, "title": "cancelled"}]
+        self.labels.append({"id": 8, "title": "note"})
         self.auth: set[str] = set()
         fake = self
 
@@ -256,6 +257,9 @@ class FakeVikunja:
 
             def do_PUT(self) -> None:
                 self._reply(fake.handle("PUT", self.path, self._body(), self.headers))
+
+            def do_DELETE(self) -> None:
+                self._reply(fake.handle("DELETE", self.path, b"", self.headers))
 
             def do_POST(self) -> None:
                 self._reply(fake.handle("POST", self.path, self._body(), self.headers))
@@ -290,6 +294,7 @@ class FakeVikunja:
             "done": done,
             "labels": [l for l in self.labels if l["title"] in labels],
             "attachments": [],
+            "related_tasks": {},
         }
         self.tasks[task_id] = task
         self.comments[task_id] = []
@@ -324,8 +329,21 @@ class FakeVikunja:
                 name = re.search(rb'filename="([^"]*)"', body)[1].decode()
                 content = body.split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n--", 1)[0]
                 self.uploads.append((int(task_id), name, content))
-                self.tasks[int(task_id)]["attachments"].append({"file": {"name": name}})
+                attachment = {"id": len(self.uploads), "file": {"name": name, "size": len(content)}}
+                self.tasks[int(task_id)]["attachments"].append(attachment)
                 return 200, {"success": [{"file": {"name": name}}]}
+            case "DELETE", ["tasks", task_id, "attachments", attachment_id]:
+                task = self.tasks[int(task_id)]
+                task["attachments"] = [a for a in task["attachments"] if a["id"] != int(attachment_id)]
+                return 200, {"message": "Successfully deleted."}
+            case "PUT", ["tasks", task_id, "relations"]:
+                data = json.loads(body)
+                task, other = self.tasks[int(task_id)], self.tasks[data["other_task_id"]]
+                for a, b in ((task, other), (other, task)):
+                    a["related_tasks"].setdefault(data["relation_kind"], []).append(
+                        {"id": b["id"], "title": b["title"]}
+                    )
+                return 201, data
             case "GET", ["labels"]:
                 return 200, self.labels
             case "PUT", ["tasks", task_id, "labels"]:

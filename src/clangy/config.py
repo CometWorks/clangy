@@ -123,10 +123,14 @@ class TasksConfig(Strict):
     api_key_env: str = "TASKS_PASS"
     canceled_label: str = "cancelled"
     """A done task with this label is canceled, otherwise completed."""
+    note_label: str = "note"
+    """Marks the tasks that are notes. The project's Kanban view should filter it out."""
     first_number: int = 1
     """The DIS number of the first ticket when the project has none."""
     max_file_bytes: int = 20 * 1000**2
     """The server's attachment limit (Vikunja's `files.maxsize`)."""
+    gzip_min_bytes: int = 256 * 1024
+    """Files from this size on are attached gzipped, if that makes them at least 30% smaller."""
     timeout: float = 30.0
     refresh_interval: float = 300.0
     """How often the sandbox's copy of the tickets is read again, besides after each of Clangy's own writes."""

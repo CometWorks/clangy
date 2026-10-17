@@ -4,7 +4,7 @@ Clangy, the support bot of the Pulsar Discord server, files tickets, notes and p
 
 ## Folders
 
-If Clangy's config has `[tasks]`, the tickets are in that Vikunja project instead, and `tickets` keeps the ones from before.
+If Clangy's config has `[tasks]`, the tickets and notes are in that Vikunja project instead, and `tickets` and `notes` keep the ones from before.
 
 
 - `tickets`: problem reports, one Markdown file each, like `DIS-0001.md`. Follow `tickets/Template.md`. Move a finished ticket to `tickets/completed/` and a dropped one to `tickets/canceled/`, and set its `status` to match.

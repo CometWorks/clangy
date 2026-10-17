@@ -3,6 +3,7 @@
 Adapted from the Ticket Manager's `vklib.py`. Calls block, so the host runs them in a thread.
 """
 
+import gzip
 import html
 import json
 import logging
@@ -33,10 +34,12 @@ from clangy.store import (
 
 log = logging.getLogger(__name__)
 
-TITLE_RE = re.compile(r"^(DIS-\d{4}): (.*)$", re.S)
+TITLE_RE = re.compile(r"^((DIS|N)-\d{4}): (.*)$", re.S)
+"""A ticket or note: its id, the id's prefix and the title."""
+TICKET_REF_RE = re.compile(r"\bDIS-\d{4}\b")
 HEADER_RE = re.compile(r"<li>(\w+): (.*?)</li>")
 LINK_RE = re.compile(r'<a href="([^"]*)"[^>]*>.*?</a>', re.S)
-HEADER_KEYS = ("created", "thread", "game", "notes", "renamed_from", "severity")
+HEADER_KEYS = ("created", "thread", "game", "notes", "ticket", "renamed_from", "severity")
 """Frontmatter fields kept in the list at the top of a task's description."""
 PRIORITIES = {"low": 1, "medium": 2, "high": 3}
 
@@ -85,8 +88,12 @@ def parse_header(description: str) -> dict[str, str]:
     return {k: html.unescape(LINK_RE.sub(r"\1", v)) for k, v in HEADER_RE.findall(head)}
 
 
-def files_html(files: list[KeptFile]) -> str:
-    rows = "".join(f"<li><code>{html.escape(t)}</code>: {html.escape(line)}</li>" for t, line in _targets(files))
+Upload = tuple[str, str, bytes]
+"""A file as attached: its name, its line in the list of files, and its content."""
+
+
+def files_html(uploads: list[Upload]) -> str:
+    rows = "".join(f"<li><code>{html.escape(name)}</code>: {html.escape(line)}</li>" for name, line, _ in uploads)
     return f"<p>Attached files:</p><ul>{rows}</ul>"
 
 
@@ -99,16 +106,20 @@ def bash_variable(name: str) -> str:
 
 
 class Tracker:
-    """The tickets of one Vikunja project. Titles start with the DIS id, which Clangy assigns."""
+    """The tickets and notes of one Vikunja project. Titles start with the DIS or N id, which Clangy assigns.
 
-    def __init__(self, config: TasksConfig, mirror: Path):
+    Notes carry the note label, which the project's Kanban view filters out.
+    """
+
+    def __init__(self, config: TasksConfig, mirror: Path, notes_mirror: Path):
         self.config = config
         self.url = config.url.rstrip("/")
         self.mirror = mirror
+        self.notes_mirror = notes_mirror
         self._key: str | None = config.api_key
         self._lock = threading.RLock()
         self._ids: dict[str, int] = {}
-        """DIS id to Vikunja task id, from the last refresh."""
+        """DIS and N ids to Vikunja task ids, from the last refresh."""
         self._labels: dict[str, int] | None = None
 
     # HTTP
@@ -137,13 +148,31 @@ class Tracker:
             raise TrackerError(f"Vikunja {method} {path}: {e}") from None
         return json.loads(raw) if raw else None
 
-    def upload(self, task_id: int, path: Path, name: str) -> None:
+    def packed(self, data: bytes, name: str) -> tuple[bytes, str]:
+        """The file as it is attached: gzipped if it's large and compresses well, like a log."""
+        if len(data) >= self.config.gzip_min_bytes:
+            packed = gzip.compress(data, mtime=0)
+            if len(packed) <= len(data) * 0.7:  # Text does, images and archives don't
+                data, name = packed, name + ".gz"
+        if len(data) > self.config.max_file_bytes:
+            raise StoreError(f"{name} is larger than the {self.config.max_file_bytes // 1000**2} MB the tracker takes")
+        return data, name
+
+    def uploads(self, files: list[KeptFile]) -> list[Upload]:
+        """The files packed for attaching, before anything is written, so a file too large stops the write."""
+        out = []
+        for (source, _), (target, line) in zip(files, _targets(files)):
+            data, name = self.packed(source.read_bytes(), target)
+            out.append((name, line, data))
+        return out
+
+    def upload(self, task_id: int, name: str, content: bytes) -> None:
         boundary = uuid.uuid4().hex
         head = (
             f'--{boundary}\r\nContent-Disposition: form-data; name="files"; filename="{name}"\r\n'
             "Content-Type: application/octet-stream\r\n\r\n"
         )
-        data = head.encode() + path.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+        data = head.encode() + content + f"\r\n--{boundary}--\r\n".encode()
         self.api(
             "PUT", f"/tasks/{task_id}/attachments", data=data, content_type=f"multipart/form-data; boundary={boundary}"
         )
@@ -184,40 +213,65 @@ class Tracker:
         task.update(fields)
         return self.api("POST", f"/tasks/{task_id}", task)
 
-    def attach(self, task_id: int, files: list[KeptFile]) -> None:
-        for (source, _), (target, _) in zip(files, _targets(files)):
-            self.upload(task_id, source, target)
+    def attach(self, task_id: int, uploads: list[Upload]) -> None:
+        for name, _, content in uploads:
+            self.upload(task_id, name, content)
 
     # Tickets
 
-    def create(self, title: str, body: str, meta: dict[str, str], files: list[KeptFile] = ()) -> str:
-        """Files a new ticket with the next free DIS number and returns the id."""
+    def create(
+        self, kind: str, title: str, body: str, meta: dict[str, str], files: list[KeptFile] = (), first_number: int = 1
+    ) -> str:
+        """Files a new ticket or note with the next free number and returns the id. A note is linked to the tickets
+        it names. `first_number` is the lowest number a note may get, after the workspace's own."""
         title, body = _check_text(title, body)
+        uploads = self.uploads(files)
+        prefix = "DIS" if kind == "ticket" else "N"
+        first = self.config.first_number if kind == "ticket" else first_number
         with self._lock:
-            taken = [int(m[1][4:]) for t in self.tasks() if (m := TITLE_RE.match(t["title"]))]
-            doc_id = f"DIS-{1 + max(taken, default=self.config.first_number - 1):04d}"
+            taken = [
+                int(m[1].split("-")[1]) for t in self.tasks() if (m := TITLE_RE.match(t["title"])) and m[2] == prefix
+            ]
+            doc_id = f"{prefix}-{max(first, 1 + max(taken, default=0)):04d}"
             description = header_html({"created": utc_now(), **meta}) + to_html(body)
-            if files:
-                description += files_html(files)
+            if uploads:
+                description += files_html(uploads)
             task = self.api(
                 "PUT",
                 f"/projects/{self.config.project}/tasks",
                 {"title": f"{doc_id}: {title}", "description": description},
             )
             self._ids[doc_id] = task["id"]
-            # The ticket exists now; a failure would only make the model file it again
+            # The document exists now; a failure would only make the model create it again
             try:
-                if meta.get("game"):
-                    self.label(task["id"], meta["game"])
-                self.attach(task["id"], files)
+                labels = [meta.get("game", "")] + ([self.config.note_label] if kind == "note" else [])
+                for label in filter(None, labels):
+                    self.label(task["id"], label)
+                self.attach(task["id"], uploads)
+                if kind == "note":
+                    self.relate_mentions(task["id"], body)
             except TrackerError as e:
-                log.error("%s is filed without its label or files: %s", doc_id, e)
+                log.error("%s is created without its labels, files or links: %s", doc_id, e)
             self._refresh_after_write()
         return doc_id
+
+    def relate_mentions(self, task_id: int, text: str) -> None:
+        """Links the task to every ticket the text names."""
+        named = list(dict.fromkeys(TICKET_REF_RE.findall(text)))
+        if any(t not in self._ids for t in named):
+            self._refresh()
+        for ticket_id in named:
+            if (other := self._ids.get(ticket_id)) and other != task_id:
+                try:
+                    self.api("PUT", f"/tasks/{task_id}/relations", {"other_task_id": other, "relation_kind": "related"})
+                except TrackerError as e:
+                    if "HTTP 409" not in str(e):  # Linked already
+                        raise
 
     def add_report(self, ticket_id: str, body: str, meta: dict[str, str], files: list[KeptFile] = ()) -> None:
         """Adds a repeated report of the same problem to an open ticket, as a comment."""
         _, body = _check_text("report", body)
+        uploads = self.uploads(files)
         with self._lock:
             task = self._task(ticket_id)
             if task["done"]:
@@ -226,9 +280,9 @@ class Tracker:
                     f"{ticket_id} is {state}. If the problem came back, create a new ticket and name {ticket_id} in it."
                 )
             markup = "<p><strong>Report</strong></p>" + header_html({"created": utc_now(), **meta}) + to_html(body)
-            if files:
-                markup += files_html(files)
-            self.attach(task["id"], files)
+            if uploads:
+                markup += files_html(uploads)
+            self.attach(task["id"], uploads)
             self.comment(task["id"], markup)
             self._refresh_after_write()
 
@@ -254,7 +308,7 @@ class Tracker:
     # The mirror
 
     def refresh(self) -> int:
-        """Rewrites the mirror from Vikunja and returns the number of tickets. Keeps the old one if Vikunja can't be
+        """Rewrites the mirrors from Vikunja and returns the number of tickets and notes. Keeps the old one if Vikunja can't be
         read."""
         with self._lock:
             self._refresh()
@@ -267,25 +321,31 @@ class Tracker:
             log.warning("Tickets not refreshed: %s", e)
 
     def _refresh(self) -> None:
-        # Files are replaced one by one: a running sandbox has the folder itself mounted
-        tasks = [(m[1], m[2], t) for t in self.tasks() if (m := TITLE_RE.match(t["title"]))]
-        for folder in ("", *CLOSED):
-            (self.mirror / folder).mkdir(parents=True, exist_ok=True)
+        # Files are replaced one by one: a running sandbox has the folders themselves mounted
+        tasks = [(m[1], m[3], t) for t in self.tasks() if (m := TITLE_RE.match(t["title"]))]
+        for folder in (self.mirror, *(self.mirror / c for c in CLOSED), self.notes_mirror):
+            folder.mkdir(parents=True, exist_ok=True)
         written = set()
         for doc_id, title, task in tasks:
-            status = "open" if not task["done"] else "canceled" if self._canceled(task) else "completed"
-            path = self.mirror / ("" if status == "open" else status) / f"{doc_id}.md"
+            if doc_id.startswith("N-"):
+                path, status = self.notes_mirror / f"{doc_id}.md", None
+            else:
+                status = "open" if not task["done"] else "canceled" if self._canceled(task) else "completed"
+                path = self.mirror / ("" if status == "open" else status) / f"{doc_id}.md"
             write_file(path, self._document(doc_id, title, status, task))
             written.add(path)
-        for path in self._mirrored():
+        for path in [*self._mirrored(), *self.notes_mirror.glob("N-[0-9][0-9][0-9][0-9].md")]:
             if path not in written:
                 path.unlink()
         self._ids = {doc_id: task["id"] for doc_id, _, task in tasks}
 
-    def _document(self, doc_id: str, title: str, status: str, task: dict) -> str:
+    def _document(self, doc_id: str, title: str, status: str | None, task: dict) -> str:
         description = task.get("description") or ""
-        meta = {"id": doc_id, "title": title, **parse_header(description), "status": status}
+        meta = {"id": doc_id, "title": title, **parse_header(description), **({"status": status} if status else {})}
         meta["url"] = f"{self.url}/tasks/{task['id']}"
+        related = sorted(x["title"].split(":", 1)[0] for x in (task.get("related_tasks") or {}).get("related") or [])
+        if related:
+            meta["related"] = ", ".join(related)
         body = to_text(description.split("</ul>", 1)[1] if description.startswith("<ul>") else description)
         if task.get("attachments"):
             body += "\n\n# Attachments\n\n" + "".join(f"- `{a['file']['name']}`\n" for a in task["attachments"])
