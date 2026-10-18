@@ -32,10 +32,15 @@ class DiscordChat:
         assert isinstance(channel, discord.abc.Messageable)
         return channel
 
-    async def send(self, channel_id: int, content: str, files: list[Path] | None = None) -> int:
+    async def send(
+        self, channel_id: int, content: str, files: list[Path] | None = None, ping: int | None = None
+    ) -> int:
         channel = await self._channel(channel_id)
         uploads = [discord.File(f) for f in files or []]
-        message = await channel.send(content, files=uploads, allowed_mentions=NO_PINGS)
+        mentions = NO_PINGS
+        if ping is not None:
+            mentions = discord.AllowedMentions(everyone=False, roles=False, users=[discord.Object(id=ping)])
+        message = await channel.send(content, files=uploads, allowed_mentions=mentions)
         return message.id
 
     async def edit(self, channel_id: int, message_id: int, content: str, files: list[Path] | None = None) -> None:

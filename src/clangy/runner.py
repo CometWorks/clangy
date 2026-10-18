@@ -18,7 +18,15 @@ PACKAGE_DIR = Path(__file__).parent
 EXTENSION = PACKAGE_DIR / "pi" / "clangy.ts"
 SANDBOX_BIN = PACKAGE_DIR / "sandbox-bin"
 """rg, fd and find wrappers that follow symlinks, first on the sandbox's PATH."""
-HOST_TOOLS = ["set_game", "attach_files", "ticket_create", "ticket_add_report", "note_create", "plan_create"]
+HOST_TOOLS = [
+    "set_game",
+    "attach_files",
+    "ticket_create",
+    "ticket_add_report",
+    "note_create",
+    "plan_create",
+    "contact_author",
+]
 """Registered by pi/clangy.ts. pi 1.x applies --tools to extension tools too, so they must be listed."""
 TOOLS = ",".join(["read", "grep", "find", "ls", "bash", *HOST_TOOLS])
 PI_MODEL = "clangy"
