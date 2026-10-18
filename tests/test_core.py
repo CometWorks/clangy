@@ -45,6 +45,15 @@ def answer(reply: str) -> Step:
     return step
 
 
+def hub_entry(tmp_path, name: str, repo: str, support: str | None) -> None:
+    folder = tmp_path / "hub" / "Plugins"
+    folder.mkdir(parents=True, exist_ok=True)
+    link = (
+        support if support and support.startswith("<Support>") else f"<Support>{support}</Support>" if support else ""
+    )
+    (folder / f"{name}.xml").write_text(f"<PluginData><RepoId>{repo}</RepoId>{link}</PluginData>")
+
+
 def tool(name: str, params: dict, then: Step) -> Step:
     async def step(agent: "FakeAgent", spec: RunSpec) -> RunResult:
         agent.tool_results.append(await host(spec, f"/tools/{name}", params))
@@ -102,6 +111,7 @@ def config(tmp_path, backend) -> Config:
         ],
         progress_interval=0.01,
         health_interval=0.01,
+        hubs=[tmp_path / "hub"],
     )
 
 
@@ -1453,3 +1463,164 @@ async def test_tickets_go_to_vikunja_when_configured(chat, config):
         await bot.close()
     finally:
         vikunja.close()
+
+
+async def test_author_is_pinged_in_a_new_message_after_the_answer(bot, chat, tmp_path):
+    hub_entry(tmp_path, "a", "Owner/Plugin", "https://discord.com/users/777")
+    ask = {"repo": "owner/plugin", "severity": "question", "reason": "How does it save?"}
+    bot.agent.script = [tool("contact_author", ask, answer("Not documented."))]
+    await bot.on_message(forum_post(SUPPORT, 1030, "Plugin question"))
+    await bot.wait_idle()
+    reply, ping = chat.in_channel(1030)
+    assert reply.current.startswith("Not documented.") and reply.ping is None
+    assert ping.ping == 777 and ping.content.startswith("<@777> ") and "How does it save?" in ping.content
+    assert bot.agent.tool_results[0][0] == 200 and bot.conversations[1030].author_pings == []
+
+
+@pytest.mark.parametrize(
+    "link, kind",
+    [
+        ("https://discord.com/channels/1/2", "Discord channel"),
+        ("https://discord.gg/abc", "Discord server invite"),
+        ("https://github.com/owner/plugin/issues", "GitHub issue tracker"),
+    ],
+)
+async def test_other_support_links_are_given_to_the_player_not_pinged(bot, chat, tmp_path, link, kind):
+    hub_entry(tmp_path, "a", "owner/plugin", link)
+    ask = {"repo": "owner/plugin", "severity": "question", "reason": "Why?"}
+    bot.agent.script = [tool("contact_author", ask, answer("Ask there."))]
+    await bot.on_message(forum_post(SUPPORT, 1031, "Plugin question"))
+    await bot.wait_idle()
+    status, body = bot.agent.tool_results[0]
+    assert status == 200 and kind in body["text"] and link in body["text"]
+    assert [m.ping for m in chat.in_channel(1031)] == [None]
+    assert bot.conversations[1031].author_pings == []
+
+
+STRUCTURED = (
+    "<Support>"
+    '<Contact severity="question">https://github.com/o/p/discussions</Contact>'
+    '<Contact severity="bug">https://github.com/o/p/issues</Contact>'
+    '<Contact severity="urgent" ping="true">https://discord.com/users/777</Contact>'
+    "<Note>  Bugs as issues\n please. </Note>"
+    "</Support>"
+)
+
+
+@pytest.mark.parametrize(
+    "severity, link, ping",
+    [
+        ("question", "https://github.com/o/p/discussions", None),
+        ("bug", "https://github.com/o/p/issues", None),
+        ("urgent", "https://discord.com/users/777", 777),
+    ],
+)
+async def test_structured_support_picks_the_contact_of_the_severity(bot, chat, tmp_path, severity, link, ping):
+    hub_entry(tmp_path, "a", "o/p", STRUCTURED)
+    ask = {"repo": "o/p", "severity": severity, "reason": "Why?"}
+    bot.agent.script = [tool("contact_author", ask, answer("Done."))]
+    await bot.on_message(forum_post(SUPPORT, 1040, "Plugin question"))
+    await bot.wait_idle()
+    status, body = bot.agent.tool_results[0]
+    assert status == 200 and "Bugs as issues please." in body["text"] and "hub entry" in body["text"]
+    assert (link in body["text"]) == (ping is None)
+    assert [m.ping for m in chat.in_channel(1040) if m.ping] == ([ping] if ping else [])
+
+
+async def test_structured_support_falls_back_to_the_default_contact(bot, chat, tmp_path):
+    hub_entry(tmp_path, "a", "o/p", "<Support><Contact>https://discord.gg/abc</Contact></Support>")
+    ask = {"repo": "o/p", "severity": "urgent", "reason": "Why?"}
+    bot.agent.script = [tool("contact_author", ask, answer("Done."))]
+    await bot.on_message(forum_post(SUPPORT, 1041, "Plugin question"))
+    await bot.wait_idle()
+    assert "https://discord.gg/abc" in bot.agent.tool_results[0][1]["text"]
+
+
+async def test_severity_without_contact_or_default_is_a_tool_error(bot, chat, tmp_path):
+    hub_entry(
+        tmp_path, "a", "o/p", '<Support><Contact severity="bug">https://github.com/o/p/issues</Contact></Support>'
+    )
+    ask = {"repo": "o/p", "severity": "urgent", "reason": "Why?"}
+    bot.agent.script = [tool("contact_author", ask, answer("See its issues."))]
+    await bot.on_message(forum_post(SUPPORT, 1042, "Plugin question"))
+    await bot.wait_idle()
+    status, body = bot.agent.tool_results[0]
+    assert status == 400 and "no urgent contact" in body["error"]
+
+
+@pytest.mark.parametrize(
+    "support, pings",
+    [
+        ('<Support><Contact ping="true">https://discord.com/users/5</Contact></Support>', True),
+        ("<Support><Contact>https://discord.com/users/5</Contact></Support>", False),
+        ('<Support><Contact ping="false">https://discord.com/users/5</Contact></Support>', False),
+        ('<Support><Contact ping="true">https://github.com/o/p/issues</Contact></Support>', False),
+        ("https://discord.com/users/5", True),
+    ],
+)
+async def test_structured_user_link_pings_only_with_the_opt_in(bot, chat, tmp_path, support, pings):
+    hub_entry(tmp_path, "a", "o/p", support)
+    ask = {"repo": "o/p", "severity": "bug", "reason": "Why?"}
+    bot.agent.script = [tool("contact_author", ask, answer("Done."))]
+    await bot.on_message(forum_post(SUPPORT, 1043, "Plugin question"))
+    await bot.wait_idle()
+    assert (len(chat.in_channel(1043)) == 2) == pings
+    assert bot.agent.tool_results[0][0] == 200
+
+
+async def test_unknown_severity_is_a_tool_error(bot, chat, tmp_path):
+    hub_entry(tmp_path, "a", "o/p", "https://discord.com/users/5")
+    ask = {"repo": "o/p", "severity": "critical", "reason": "Why?"}
+    bot.agent.script = [tool("contact_author", ask, answer("Done."))]
+    await bot.on_message(forum_post(SUPPORT, 1044, "Plugin question"))
+    await bot.wait_idle()
+    status, body = bot.agent.tool_results[0]
+    assert status == 400 and "severity must be" in body["error"]
+    assert [m.ping for m in chat.in_channel(1044)] == [None]
+
+
+async def test_plugin_without_support_link_is_a_tool_error(bot, chat, tmp_path):
+    hub_entry(tmp_path, "a", "owner/plugin", None)
+    ask = {"repo": "owner/plugin", "severity": "question", "reason": "Why?"}
+    bot.agent.script = [tool("contact_author", ask, answer("See its issues."))]
+    await bot.on_message(forum_post(SUPPORT, 1034, "Plugin question"))
+    await bot.wait_idle()
+    status, body = bot.agent.tool_results[0]
+    assert status == 400 and "no question contact" in body["error"]
+    assert [m.ping for m in chat.in_channel(1034)] == [None]
+
+
+async def test_author_is_pinged_once_per_plugin_and_thread(bot, chat, tmp_path):
+    hub_entry(tmp_path, "a", "owner/plugin", "https://discord.com/users/777")
+    ask = {"repo": "OWNER/plugin", "severity": "bug", "reason": "How does it save?"}
+    bot.agent.script = [tool("contact_author", ask, answer("First.")), tool("contact_author", ask, answer("Second."))]
+    await bot.on_message(forum_post(SUPPORT, 1032, "Plugin question"))
+    await bot.wait_idle()
+    await bot.on_message(message(1032, "@Clangy again", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
+    assert "already asked" in bot.agent.tool_results[1][1]["text"]
+    assert [m.ping for m in chat.in_channel(1032)] == [None, 777, None]
+
+
+async def test_author_is_pinged_once_per_thread_whatever_the_severity(bot, chat, tmp_path):
+    hub_entry(tmp_path, "a", "o/p", '<Support><Contact ping="true">https://discord.com/users/5</Contact></Support>')
+    bug = {"repo": "o/p", "severity": "bug", "reason": "One"}
+    urgent = {**bug, "severity": "urgent"}
+    bot.agent.script = [tool("contact_author", bug, tool("contact_author", urgent, answer("Done.")))]
+    await bot.on_message(forum_post(SUPPORT, 1045, "Plugin question"))
+    await bot.wait_idle()
+    assert "already asked" in bot.agent.tool_results[1][1]["text"]
+    assert [m.ping for m in chat.in_channel(1045)] == [None, 5]
+
+
+async def test_author_is_not_pinged_when_the_run_fails(bot, chat, tmp_path):
+    hub_entry(tmp_path, "a", "owner/plugin", "https://discord.com/users/777")
+    ask = {"repo": "owner/plugin", "severity": "question", "reason": "How does it save?"}
+    bot.agent.script = [tool("contact_author", ask, timeout), answer("Done.")]
+    await bot.on_message(forum_post(SUPPORT, 1033, "Plugin question"))
+    await bot.wait_idle()
+    assert all(m.ping is None for m in chat.in_channel(1033))
+    assert bot.conversations[1033].author_pings == []
+    await bot.on_message(message(1033, "@Clangy retry", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
+    assert all(m.ping is None for m in chat.in_channel(1033))

@@ -12,6 +12,11 @@ health_interval = 30.0
 max_retries = 5
 switch_margin = 60.0
 retention_days = 30
+# Clones of the plugin hubs (kept by deploy/sync-hub-plugins.py). A plugin's <Support> there says how to reach its
+# author per severity (question, bug, urgent): a Discord user who opted in is mentioned once per thread, any other
+# link is given to the player. See docs/configuration.md, Plugin support.
+# hubs = ["/home/clangy/repos/CometWorks/skills/skills/se-dev-plugin/Data/PluginHub",
+#         "/home/clangy/repos/CometWorks/skills/skills/se-dev-plugin/Data/MagnetarHub"]
 # Skills the model isn't told about; their files stay readable
 hidden_skills = ["se-dev-plugin-review"]
 # Caps the context on every backend; unset means the smallest backend context_window

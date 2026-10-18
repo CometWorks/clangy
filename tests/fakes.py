@@ -143,6 +143,8 @@ class Sent:
     edits: list[str] = field(default_factory=list)
     files: list[bytes] = field(default_factory=list)
     filenames: list[str] = field(default_factory=list)
+    ping: int | None = None
+    """The only user the message may mention."""
 
     @property
     def current(self) -> str:
@@ -171,9 +173,11 @@ class FakeChat:
     def in_channel(self, channel_id: int) -> list[Sent]:
         return [m for m in self.messages.values() if m.channel_id == channel_id]
 
-    async def send(self, channel_id: int, content: str, files: list[Path] | None = None) -> int:
+    async def send(
+        self, channel_id: int, content: str, files: list[Path] | None = None, ping: int | None = None
+    ) -> int:
         self._next_id += 1
-        self.messages[self._next_id] = sent = Sent(channel_id, self._next_id, content)
+        self.messages[self._next_id] = sent = Sent(channel_id, self._next_id, content, ping=ping)
         sent.attach(files)
         return self._next_id
 

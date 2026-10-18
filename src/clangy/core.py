@@ -22,6 +22,7 @@ from clangy.backend import Backend
 from clangy.cache import MessageCache
 from clangy.config import ChannelConfig, Config, Game, SandboxConfig
 from clangy.files import FileError, Outbox, safe_filename
+from clangy.hubs import KIND_NAMES, SEVERITIES, HubSupport
 from clangy.messages import Attachment, IncomingMessage
 from clangy.proxy import HostServer, ProxyRun, RunStats, TcpRelay, ToolError
 from clangy.runner import PACKAGE_DIR, RunPaths, RunResult, RunSpec, free_port, replace_answer, run_pi, write_pi_config
@@ -53,7 +54,11 @@ class PostRefused(ValueError):
 class Chat(Protocol):
     bot_name: str
 
-    async def send(self, channel_id: int, content: str, files: list[Path] | None = None) -> int: ...
+    async def send(
+        self, channel_id: int, content: str, files: list[Path] | None = None, ping: int | None = None
+    ) -> int:
+        """Posts a message. It may mention only the user `ping`, if set."""
+        ...
 
     async def edit(self, channel_id: int, message_id: int, content: str, files: list[Path] | None = None) -> None: ...
 
@@ -103,6 +108,12 @@ class KnownMessage(BaseModel):
 Status = Literal["idle", "queued", "running", "backend_error", "failed"]
 
 
+class AuthorPing(BaseModel):
+    repo: str
+    discord_id: int
+    reason: str
+
+
 class Conversation(BaseModel):
     thread_id: int
     channel_id: int
@@ -128,6 +139,10 @@ class Conversation(BaseModel):
     """The forum post's title as last told to the model."""
     tags: list[str] = Field(default_factory=list)
     """The forum post's tags as last told to the model."""
+    author_pings: list[AuthorPing] = Field(default_factory=list)
+    """Plugin authors the running answer asked for, posted after it. A run that fails drops them."""
+    pinged_repos: list[str] = Field(default_factory=list)
+    """Lowercase repositories whose author was already pinged in this thread, each at most once."""
 
     @property
     def key(self) -> str:
@@ -213,6 +228,7 @@ def human_size(size: int) -> str:
 class Clangy:
     def __init__(self, config: Config, chat: Chat, run_agent: RunAgent = run_pi):
         self.config = config
+        self.hub_support = HubSupport(config.hubs)
         self.chat = chat
         self.run_agent = run_agent
         tracker = (
@@ -725,6 +741,7 @@ class Clangy:
         self._in_run[conv.thread_id] = consumed
         delivered = list(conv.host_notes)
         self._snapshot_session(conv)
+        conv.author_pings.clear()
         files = self.files_dir(conv.thread_id)
         outbox = Outbox(
             work=self._work_dir(conv),
@@ -831,6 +848,7 @@ class Clangy:
             return
         shutil.rmtree(outbox.staging, ignore_errors=True)
         self._restore_session(conv)
+        conv.author_pings.clear()
         if stats.backend_failed:
             now = time.monotonic()
             backend.mark_failed(now, stats.retry_after)
@@ -1078,6 +1096,8 @@ class Clangy:
                 return self._set_game(conv, params["game"])
             case "attach_files":
                 return self._outboxes[conv.thread_id].add(params["paths"], params.get("archive"))
+            case "contact_author":
+                return self._contact_author(conv, params["repo"], params["severity"], params["reason"])
             case "ticket_create" | "note_create" | "plan_create":
                 files = self._kept_files(conv, params.get("files") or [])
                 doc_id = self.store.create(
@@ -1089,6 +1109,26 @@ class Clangy:
                 self.store.add_report(params["id"], params["body"], meta, files, by)
                 return f"Added the report to {params['id']}."
         raise ToolError(f"unknown tool: {name}")
+
+    def _contact_author(self, conv: Conversation, repo: str, severity: str, reason: str) -> str:
+        if severity not in SEVERITIES:
+            raise ToolError(f"severity must be one of {', '.join(SEVERITIES)}")
+        entry = self.hub_support.lookup(repo)
+        contact = entry.contact(severity) if entry else None
+        if entry is None or contact is None:
+            raise ToolError(f"{repo} lists no {severity} contact; point the player to the plugin's GitHub issues page")
+        note = f" The author's note in the plugin's hub entry: {entry.note}" if entry.note else ""
+        if not (contact.user_id and contact.ping):
+            return (
+                f"Nobody is pinged; the author's contact for a {severity} is the {KIND_NAMES[contact.kind]} "
+                f"{contact.url}: give the player that link.{note}"
+            )
+        key = repo.strip().lower()
+        if key in conv.pinged_repos or any(p.repo == key for p in conv.author_pings):
+            return f"The author was already asked in this thread.{note}"
+        conv.author_pings.append(AuthorPing(repo=key, discord_id=contact.user_id, reason=reason))
+        self.save(conv)
+        return f"The author will be pinged after your answer.{note}"
 
     def _kept_files(self, conv: Conversation, files: list[dict]) -> list[KeptFile]:
         """Attachments and files the agent wrote, to keep in the store with where they came from."""
@@ -1177,6 +1217,15 @@ class Clangy:
             conv.known[message_id] = own
             self._message_threads[message_id] = conv.thread_id
         self.save(conv)
+        await self._send_author_pings(conv)
+
+    async def _send_author_pings(self, conv: Conversation) -> None:
+        """Mentions in an edit don't notify, so each ping is a new message after the answer."""
+        for ping in list(conv.author_pings):
+            conv.author_pings.remove(ping)
+            conv.pinged_repos.append(ping.repo)
+            self.save(conv)
+            await self.chat.send(conv.thread_id, text.author_ping(ping.discord_id, ping.reason), ping=ping.discord_id)
 
     async def _update_progress(self, conv: Conversation, backend: Backend, progress: Progress, shown: str) -> None:
         while True:
