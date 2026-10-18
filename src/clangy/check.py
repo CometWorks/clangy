@@ -51,7 +51,9 @@ class ConsoleChat:
     def __init__(self) -> None:
         self._next = 0
 
-    async def send(self, channel_id: int, content: str, files: list[Path] | None = None) -> int:
+    async def send(
+        self, channel_id: int, content: str, files: list[Path] | None = None, ping: int | None = None
+    ) -> int:
         self._next += 1
         print(f"  post: {content}")
         return self._next

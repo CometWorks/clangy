@@ -167,8 +167,13 @@ Host tools, defined in `pi/clangy.ts` and run by the host through the socket:
 | `attach_files` | Stages files for the answer (see Files). |
 | `ticket_create`, `ticket_add_report` | Files a problem report, or adds a repeated report to an open ticket. |
 | `note_create`, `plan_create` | Shared findings, and plans from ideas or requests. |
+| `contact_author` | Reaches the author of a plugin for a severity (`question`, `bug`, `urgent`): pings them once per plugin and thread, or returns the contact the plugin's hub entry lists for that severity and the author's note (see Mentions). A plugin without a contact for it is a tool error, as is an unknown severity. |
 
 The last four take optional `files` to keep, see Store.
+
+### Mentions
+
+Every message and edit Clangy sends has Discord's mentions switched off (`NO_PINGS`), so nothing a user or a model writes can ping anyone. The one exception is `contact_author`: when the plugin's contact for the severity is a Discord user the author opted in to being mentioned, the host records the request on the conversation and, once the answer is posted, sends a new message that mentions only that user. The contacts, the opt-in and the author's note come from the `<Support>` element of the plugin's entry in a hub clone listed in `hubs` (matching rules in configuration.md), which the hub's review has seen, never from the plugin's own repository or anything a user wrote. The model chooses only the severity. It has to be a new message, since an edit doesn't notify. Every other contact (Discord channel or server invite, GitHub issues, any web page, or a user without the opt-in) pings nobody: the tool returns the link for the agent to give the player, with the author's note, which only informs the wording. At most one ping per plugin and thread, whatever the severity. A run that fails posts no ping, and a retry may ask again.
 
 A tool error goes back to the model as a failed tool call. `runner.HOST_TOOLS` must list the same names, since pi 1.x applies `--tools` to extension tools too; a test checks this.
 

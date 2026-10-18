@@ -88,6 +88,22 @@ const tools = [
 		description: "Create a plan from an idea or request, e.g. a plugin, mod or script request.",
 		parameters: Type.Object({ title, body, files }),
 	},
+	{
+		name: "contact_author",
+		description:
+			"Reach a plugin's author when the question is about their plugin and its guide and source don't answer it. " +
+			"Depending on what the author listed for that severity, this pings them once per thread or returns a link " +
+			"to give the player.",
+		parameters: Type.Object({
+			repo: Type.String({ description: "The plugin's repository, owner/repo" }),
+			severity: Type.Union([Type.Literal("question"), Type.Literal("bug"), Type.Literal("urgent")], {
+				description:
+					"question: the docs and source don't answer it. bug: a reproducible problem or crash for this player. " +
+					"urgent: broken for everyone, e.g. after a game update, crashing at start, or losing data",
+			}),
+			reason: Type.String({ description: "One sentence for the author: what is still unanswered" }),
+		}),
+	},
 ];
 
 function bridge(port: number, path: string) {

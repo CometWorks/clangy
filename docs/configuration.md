@@ -21,6 +21,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `switch_margin` | `60` | A conversation moves to another backend only if that one answers sooner by this much, even after reading the whole conversation again. See design.md, Backends. |
 | `retention_days` | `30` | Conversations (all but `metrics.jsonl`) and records not touched for this long are deleted at startup. The message cache keeps two days at most. See design.md, Retention. |
 | `secret_markers` | book names, `knowledge/books` | Answers containing any of these (case-insensitive) are withheld. |
+| `hubs` | none | Clones of the plugin hubs, each with a `Plugins` folder of XML files (`deploy/sync-hub-plugins.py` keeps them in the plugin skills' `Data` folders). The `<Support>` link in a plugin's entry says how `contact_author` reaches its author, see Plugin support below. |
 | `hidden_skills` | none | Skill names left out of the skill list the model gets, e.g. ones that need tools the sandbox lacks. Their files stay readable. |
 
 ## `[sandbox]`
@@ -106,6 +107,40 @@ Clangy acts only in listed channels. The Discord permission overwrites must matc
 | `history_messages`, `history_hours` | `100`, `4` | The earlier messages that go along with a mention in a channel as context: back to midnight UTC, but at least `history_hours`, and at most `history_messages`. A mention in a thread Clangy doesn't know yet reads all of the thread instead. |
 | `game` | none | `se1` or `se2` if the channel is about one game. |
 | `prompt` | `""` | Extra instructions appended to the system prompt for this channel. |
+
+## Plugin support
+
+A plugin's hub entry may say how its author wants to be reached when Clangy can't answer a question about the plugin. Clangy finds the entry by the `<RepoId>` (or `<Id>`) `owner/repo` and reads the files again when they change. Pulsar ignores elements it doesn't know. The model calls `contact_author` with a severity:
+
+| Severity | Meaning |
+|---|---|
+| `question` | A question the plugin's docs and source don't answer. |
+| `bug` | A reproducible problem or crash for this player. |
+| `urgent` | Broken for everyone, e.g. after a game update, crashing at start, or losing data. |
+
+Simple form, one link for every severity:
+
+```xml
+<Support>https://github.com/owner/repo/issues</Support>
+```
+
+Structured form, a link per severity and an optional note:
+
+```xml
+<Support>
+  <Contact severity="question">https://github.com/owner/repo/discussions</Contact>
+  <Contact severity="bug">https://github.com/owner/repo/issues</Contact>
+  <Contact severity="urgent" ping="true">https://discord.com/users/123456789012345678</Contact>
+  <Note>Bugs as GitHub issues please; ping me only if the plugin is broken for everyone.</Note>
+</Support>
+```
+
+- A `<Contact>` uses the one whose `severity` is the asked one, else the one without a `severity` (the default), else the plugin has no contact for that severity. A `<Contact>` with an unknown severity is ignored.
+- A Discord user link (`https://discord.com/users/<id>`) mentions that user in a new message after the answer, at most once per plugin and thread whatever the severity. In the simple form it always does; in the structured form only with `ping="true"`, otherwise the link is given to the player. `ping` does nothing on other links.
+- Every other link is given to the player: a Discord channel (`https://discord.com/channels/<server>/<channel>`), a server invite (`https://discord.gg/<code>`, `https://discord.com/invite/<code>`), an issue tracker (`https://github.com/<owner>/<repo>/issues...`), or any other `http(s)` link. A link that isn't `http(s)` is ignored.
+- `<Note>` is trimmed to 300 characters and shown to the model as the author's stated preference, from the hub entry, so it can word its answer. It never changes what Clangy does.
+
+A plugin without a usable contact for the severity, or in a hub that can't be read (logged), has no contact, and Clangy points players to its issues page.
 
 ## `[[knowledge.se1]]`, `[[knowledge.se2]]`
 

@@ -7,6 +7,12 @@ discord_token = ""
 run_deadline = 900.0
 # Posts reviews to GitHub, which the sandbox can't reach
 hidden_skills = ["se-dev-plugin-review"]
+# Hub clones whose plugin entries say how to reach each author. These paths follow sync-hub-plugins.py (its SKILLS list:
+# <skill>/Data/<hub name>); the SE2 hub, ~/repos/CometWorks/skills2/skills/se2-dev-plugin/Data/PluginHub-SE2, is left out.
+hubs = [
+    "/home/clangy/repos/CometWorks/skills/skills/se-dev-plugin/Data/PluginHub",
+    "/home/clangy/repos/CometWorks/skills/skills/se-dev-plugin/Data/MagnetarHub",
+]
 # Caps the context on every backend; unset means the smallest backend context_window
 # context_window = 131072
 

@@ -138,5 +138,9 @@ def backend_gave_up(bot_name: str) -> str:
     return f"❌ My AI backend is still unreachable. Mention @{bot_name} to resume the conversation."
 
 
+def author_ping(discord_id: int, reason: str) -> str:
+    return f"<@{discord_id}> Could you look at this thread? {' '.join(reason.split())[:300]}"
+
+
 def refused() -> str:
     return "Sorry, I can't share that."

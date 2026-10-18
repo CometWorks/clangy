@@ -170,6 +170,9 @@ class Config(Strict):
     knowledge: dict[Game, list[KnowledgeSource]] = Field(default_factory=dict)
     mounts: list[KnowledgeSource] = Field(default_factory=list)
     """Like knowledge, but linked into every conversation whatever the game, e.g. the ecosystem's repos."""
+    hubs: list[Path] = Field(default_factory=list)
+    """Clones of the plugin hubs, each with a `Plugins` folder of XML files. The <Support> link in a plugin's entry
+    says how to reach its author, see the `contact_author` tool."""
     hidden_skills: list[str] = Field(default_factory=list)
     """Skills left out of the list the model gets, e.g. ones that need tools the sandbox lacks. Their files stay
     readable."""
