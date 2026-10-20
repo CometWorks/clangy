@@ -174,7 +174,9 @@ A tool error goes back to the model as a failed tool call. `runner.HOST_TOOLS` m
 
 ## The books
 
-The agent may read `knowledge/books` but must never mention it. The system prompt says so, and the host also withholds any answer containing one of `secret_markers` (by default the book repository names and `knowledge/books`), replying "Sorry, I can't share that." instead.
+The agent reads `knowledge/books` and uses it in its answers, but must never mention it or say that a handbook was used; it names the game code as its source instead. The system prompt says so, and the host also withholds any answer containing one of `secret_markers` (by default the book repository names and `knowledge/books`), replying "Sorry, I can't share that." instead.
+
+The books are on the skill list with the other skills. The game's overview skills link them like their sibling skills, as `../<book>/SKILL.md`, so the model opened `knowledge/skills/<book>/SKILL.md` and fell back to the decompiled code when that failed. So the note names the skills outside the folder that holds most of them and says to open those at their listed path, also when a skill's file isn't found. A general rule to open every skill at its listed path didn't stop the model from following the link.
 
 ## Files
 

@@ -961,6 +961,10 @@ async def test_knowledge_note_lists_the_skills(bot, config, tmp_path):
     assert bot.agent.specs[0].read_only.count(sdk) == 1, "a mount is there before the game is known"
     second = bot.agent.tool_results[0][1]["text"]
     assert second.startswith("Recorded. This conversation is about SE1. Its knowledge is under knowledge/.")
+    assert (
+        "These skills are not in knowledge/skills, so a link like ../<name>/SKILL.md from another skill "
+        "misses them: se-dev-game-book, se-dev-plugin-sdk." in second
+    )
     assert "- se-dev: Overview (knowledge/skills/se-dev/SKILL.md)" in second
     assert "- se-dev-game-code: Decompiled game code (knowledge/skills/se-dev-game-code/SKILL.md)" in second
     assert "- se-dev-game-book: Handbook (knowledge/books/se-dev-game-book/SKILL.md)" in second
