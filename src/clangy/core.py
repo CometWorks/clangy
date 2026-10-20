@@ -925,10 +925,18 @@ class Clangy:
         if skills:
             lines.append(
                 "Skills: read the matching SKILL.md before answering and follow it; "
-                "run its commands from the skill's folder. Open a skill only at the path listed here. "
-                "The skills are split across several folders under knowledge/, "
-                "so a skill named in another skill's text is not always next to it."
+                "run its commands from the skill's folder."
             )
+            # Skills link each other as ../<name>/SKILL.md, which misses the ones in other folders
+            folders = [str(Path(path).parent.parent) for _, _, path in skills]
+            main = max(set(folders), key=folders.count)
+            elsewhere = [name for (name, _, _), folder in zip(skills, folders) if folder != main]
+            if elsewhere:
+                lines.append(
+                    f"These skills are not in {main}, so a link like ../<name>/SKILL.md from another skill "
+                    f"misses them: {', '.join(elsewhere)}. Open them at the path listed here. "
+                    "If a skill's file isn't found, open it at its path from this list."
+                )
             lines += [f"- {name}: {description} ({path})" for name, description, path in skills]
         return "\n".join(lines)
 
