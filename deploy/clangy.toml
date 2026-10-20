@@ -6,7 +6,7 @@ workspace_dir = "/home/clangy"
 discord_token = ""
 run_deadline = 900.0
 # Posts reviews to GitHub, which the sandbox can't reach
-hidden_skills = ["se-dev-plugin-review"]
+hidden_skills = ["se-dev-plugin-review", "se2-dev-plugin-review"]
 # Caps the context on every backend; unset means the smallest backend context_window
 # context_window = 131072
 

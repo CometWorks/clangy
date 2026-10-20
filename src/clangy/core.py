@@ -925,7 +925,9 @@ class Clangy:
         if skills:
             lines.append(
                 "Skills: read the matching SKILL.md before answering and follow it; "
-                "run its commands from the skill's folder."
+                "run its commands from the skill's folder. Open a skill only at the path listed here. "
+                "The skills are split across several folders under knowledge/, "
+                "so a skill named in another skill's text is not always next to it."
             )
             lines += [f"- {name}: {description} ({path})" for name, description, path in skills]
         return "\n".join(lines)
