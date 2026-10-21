@@ -40,6 +40,10 @@ FIRST_RUN_TOKENS = 3000
 CACHE_AGE = timedelta(days=2)
 OUTBOX_INTERVAL = 10.0
 """Seconds between looks into the outbox."""
+DONE_EMOJI = "✅"
+DONE_TAGS = ("Completed", "Done")
+"""Forum tags that mark a post resolved. The ✅ reaction from the outbox adds the first one the forum defines."""
+EMOJI_NAMES = {":white_check_mark:": DONE_EMOJI}
 
 
 class HistoryUnavailable(RuntimeError):
@@ -70,6 +74,16 @@ class Chat(Protocol):
 
     async def thread_parent(self, thread_id: int) -> int | None:
         """The channel a thread is in, None if the id isn't a thread."""
+        ...
+
+    async def react_to_start(self, thread_id: int, emoji: str) -> int:
+        """Adds a reaction to the message a thread starts from, which has the thread's id. Returns the channel that
+        message is in: the thread itself for a forum post, the parent channel for a thread started from a message."""
+        ...
+
+    async def add_tag(self, thread_id: int, names: tuple[str, ...]) -> str | None:
+        """Applies the first of these tags that the forum of a post defines, ignoring case. Returns the tag's name,
+        None if the forum defines none of them or the thread isn't a forum post."""
         ...
 
 
@@ -1274,8 +1288,8 @@ class Clangy:
             await asyncio.sleep(OUTBOX_INTERVAL)
 
     async def send_posts(self) -> None:
-        """Posts the messages queued in the outbox, each at most once. A posted one goes to sent/, with the message
-        link; one refused or failed goes to failed/, with the error."""
+        """Posts the messages and reactions queued in the outbox, each at most once. A done one goes to sent/, with
+        the message links; one refused or failed goes to failed/, with the error."""
         for folder in ("sent", "failed"):
             (self.outbox / folder).mkdir(parents=True, exist_ok=True)
         for path in sorted(self.outbox.glob("*.md")):
@@ -1293,8 +1307,10 @@ class Clangy:
         parent = await self.chat.thread_parent(thread_id)
         if parent is None or self.config.channel(parent) is None:
             raise PostRefused(f"thread {thread_id} is not in a channel Clangy monitors")
+        emoji = meta.get("react", "").strip()
+        emoji = EMOJI_NAMES.get(emoji, emoji)
         footer = text.footer(self.chat.bot_name)
-        if not body:
+        if not body and not emoji:
             raise PostRefused("the message is empty")
         if len(body) + 2 + len(footer) > text.LIMIT:
             raise PostRefused(f"the message is over {text.LIMIT - 2 - len(footer)} characters")
@@ -1306,27 +1322,61 @@ class Clangy:
                 f.write(document(meta, body))
         except FileExistsError:
             raise PostRefused(f"sent/{name}.md exists, it was posted before") from None
-        try:
-            message_id = await self.chat.send(thread_id, f"{body}\n\n{footer}")
-        except Exception:
-            sent.unlink()
-            raise
-        link = f"{url}/{message_id}"
-        write_file(sent, document({**meta, "posted": utc_now(), "message": link}, body))
-        log.info("Posted %s in thread %s", name, thread_id)
-        if conv := self.conversations.get(thread_id):
-            # Like an answer, so edits are noticed and a lost session gets it back; the note tells the model
-            conv.known[message_id] = KnownMessage(
-                author=self.chat.bot_name, text=body, created=datetime.now(timezone.utc), own=True
-            )
-            self._message_threads[message_id] = thread_id
-            about = f" about {', '.join(ticket_ids)}" if ticket_ids else ""
-            conv.host_notes.append(f"[host] A developer had you post this in the thread{about}: {body}")
-            self.save(conv)
+        done = []
+        if body:
+            try:
+                message_id = await self.chat.send(thread_id, f"{body}\n\n{footer}")
+            except Exception:
+                sent.unlink()
+                raise
+            link = f"{url}/{message_id}"
+            meta |= {"posted": utc_now(), "message": link}
+            write_file(sent, document(meta, body))
+            log.info("Posted %s in thread %s", name, thread_id)
+            done.append(f"posted {name} from the outbox in the thread: {link}")
+            if conv := self.conversations.get(thread_id):
+                # Like an answer, so edits are noticed and a lost session gets it back; the note tells the model
+                conv.known[message_id] = KnownMessage(
+                    author=self.chat.bot_name, text=body, created=datetime.now(timezone.utc), own=True
+                )
+                self._message_threads[message_id] = thread_id
+                about = f" about {', '.join(ticket_ids)}" if ticket_ids else ""
+                conv.host_notes.append(f"[host] A developer had you post this in the thread{about}: {body}")
+                self.save(conv)
+        error = None
+        if emoji:
+            try:
+                meta |= await self._react(thread_id, url, emoji)
+            except Exception as e:
+                if not body:
+                    sent.unlink()
+                    raise
+                error = e  # The post went out, so its work log line still has to
+            else:
+                write_file(sent, document(meta, body))
+                log.info("Reacted with %s to the start of thread %s for %s", emoji, thread_id, name)
+                source = "" if body else f" for {name} from the outbox"
+                tagged = f" and tagged the post {meta['tagged']}" if "tagged" in meta else ""
+                done.append(f"reacted with {emoji} to the thread's first message{source}{tagged}: {meta['reaction']}")
         for ticket_id in ticket_ids:
-            line = f"{utc_now()}: Clangy posted {name} from the outbox in the thread: {link}"
-            subject = f"Post {name} in the thread of {ticket_id}"
+            line = f"{utc_now()}: Clangy {', and '.join(done)}"
+            subject = f"Post {name} in the thread of {ticket_id}" if body else f"React to the thread of {ticket_id}"
             await asyncio.to_thread(self.store.log_work, ticket_id, line, subject, {"thread": url})
+        if error is not None:
+            raise RuntimeError(f"posted {meta['message']}, but the reaction failed: {error}")
+
+    async def _react(self, thread_id: int, url: str, emoji: str) -> dict[str, str]:
+        """Reacts to the message the thread starts from, and with ✅ tags a forum post as done. The keys for sent/."""
+        channel_id = await self.chat.react_to_start(thread_id, emoji)
+        done = {"reacted": utc_now(), "reaction": f"{url.rsplit('/', 1)[0]}/{channel_id}/{thread_id}"}
+        if emoji == DONE_EMOJI:
+            try:
+                if tag := await self.chat.add_tag(thread_id, DONE_TAGS):
+                    done["tagged"] = tag
+            except Exception as e:  # The reaction is what counts, the tag only helps
+                log.warning("Not tagged: thread %s: %s", thread_id, e)
+                done["tag_error"] = str(e)
+        return done
 
     def _post_thread(self, to: str) -> tuple[list[str], str]:
         """The tickets and the link of the thread a post goes to: a ticket's, or one Clangy has a conversation,

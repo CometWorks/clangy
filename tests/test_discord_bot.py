@@ -116,3 +116,41 @@ async def test_edit_events_skip_own_and_unknown_messages():
     client.core.on_edit.assert_not_called()
     await ClangyClient.on_raw_message_edit(client, payload(42, 5, {"content": "@Clangy help"}))
     client.core.on_edit.assert_called_once()
+
+
+def chat_with(thread: MagicMock, parent: MagicMock):
+    from clangy.discord_bot import DiscordChat
+
+    thread.parent = parent
+    for channel in (thread, parent):
+        if not isinstance(channel, discord.ForumChannel):
+            channel.get_partial_message.return_value = MagicMock(spec=discord.PartialMessage)
+    client = MagicMock()
+    client.get_channel.side_effect = {thread.id: thread, parent.id: parent}.get
+    return DiscordChat(client, MagicMock(), 0)
+
+
+async def test_reaction_on_a_forum_post_reopens_it_and_tags_it():
+    forum = MagicMock(spec=discord.ForumChannel, id=10)
+    tags = [MagicMock(spec=discord.ForumTag), MagicMock(spec=discord.ForumTag)]
+    tags[0].name, tags[1].name = "SE1", "Completed"
+    forum.available_tags = tags
+    thread = MagicMock(spec=discord.Thread, id=42, parent_id=10, archived=True, applied_tags=[tags[0]])
+    chat = chat_with(thread, forum)
+    assert await chat.react_to_start(42, "✅") == 42
+    thread.edit.assert_awaited_once_with(archived=False)
+    thread.get_partial_message.assert_called_once_with(42)
+    thread.get_partial_message.return_value.add_reaction.assert_awaited_once_with("✅")
+    assert await chat.add_tag(42, ("completed", "Done")) == "Completed"
+    thread.add_tags.assert_awaited_once_with(tags[1])
+    assert await chat.add_tag(42, ("Fixed",)) is None
+
+
+async def test_reaction_on_a_thread_from_a_channel_message():
+    channel = MagicMock(spec=discord.TextChannel, id=10)
+    thread = MagicMock(spec=discord.Thread, id=42, parent_id=10, archived=True)
+    chat = chat_with(thread, channel)
+    assert await chat.react_to_start(42, "✅") == 10
+    channel.get_partial_message.return_value.add_reaction.assert_awaited_once_with("✅")
+    thread.edit.assert_not_called()
+    assert await chat.add_tag(42, ("Completed",)) is None

@@ -1323,9 +1323,10 @@ async def test_unknown_thread_keeps_only_clangys_answers(bot, chat):
     ]
 
 
-def queue(bot: Clangy, name: str, to: str, body: str) -> None:
+def queue(bot: Clangy, name: str, to: str, body: str, react: str = "") -> None:
     bot.outbox.mkdir(exist_ok=True)
-    (bot.outbox / f"{name}.md").write_text(f"---\nto: {to}\n---\n\n{body}\n")
+    react = f"react: {react}\n" if react else ""
+    (bot.outbox / f"{name}.md").write_text(f"---\nto: {to}\n{react}---\n\n{body}\n")
 
 
 def thread_url(thread_id: int) -> str:
@@ -1422,6 +1423,90 @@ async def test_failed_post_can_be_queued_again(bot, chat, monkeypatch):
     queue(bot, "reply", "DIS-0001", "Fixed.")
     await bot.send_posts()
     assert len(chat.in_channel(1166)) == 1
+
+
+async def test_queued_reaction_marks_the_forum_post_done(bot, chat, config):
+    bot.store.create("ticket", "Crash", "Details", {"thread": thread_url(1180)})
+    chat.parents[1180] = QUIET_FORUM
+    chat.forum_tags[QUIET_FORUM] = ["SE1", "Done"]
+    queue(bot, "DIS-0001-done", "DIS-0001", "", react="✅")
+    await bot.send_posts()
+    assert chat.messages == {} and chat.reactions == [(1180, 1180, "✅")]
+    assert chat.applied_tags[1180] == ["Done"]
+    meta, body = frontmatter((bot.outbox / "sent" / "DIS-0001-done.md").read_text())
+    starter = f"{thread_url(1180)}/1180"
+    assert (meta["react"], meta["reaction"], meta["tagged"], body) == ("✅", starter, "Done", "")
+    assert "message" not in meta and "reacted" in meta
+    ticket = (config.data_dir / "workspace" / "tickets" / "DIS-0001.md").read_text()
+    line = f": Clangy reacted with ✅ to the thread's first message for DIS-0001-done from the outbox"
+    assert ticket.endswith(f"{line} and tagged the post Done: {starter}\n")
+
+    # A second reaction under the same name is refused
+    queue(bot, "DIS-0001-done", "DIS-0001", "", react="✅")
+    await bot.send_posts()
+    assert len(chat.reactions) == 1
+    failed = (bot.outbox / "failed" / "DIS-0001-done.md").read_text()
+    assert "error: sent/DIS-0001-done.md exists, it was posted before\n" in failed
+
+
+async def test_queued_reply_and_reaction_in_a_thread_from_a_channel_message(bot, chat, config):
+    bot.store.append_record(1181, "Request", thread_url(1181), "**Dan**: please add X")
+    chat.parents[1181] = RECORD
+    chat.from_messages.add(1181)
+    chat.forum_tags[RECORD] = ["Completed"]
+    queue(bot, "added", "1181", "Added in 1.8.0.", react=":white_check_mark:")
+    await bot.send_posts()
+    [post] = chat.in_channel(1181)
+    assert post.content.startswith("Added in 1.8.0.")
+    # The thread starts from a message in the channel, which has no tags
+    assert chat.reactions == [(RECORD, 1181, "✅")] and chat.applied_tags == {}
+    meta = frontmatter((bot.outbox / "sent" / "added.md").read_text())[0]
+    assert meta["message"] == f"{thread_url(1181)}/{post.message_id}"
+    assert meta["reaction"] == f"https://discord.com/channels/{GUILD}/{RECORD}/1181" and "tagged" not in meta
+
+
+async def test_failed_reactions(bot, chat, config, monkeypatch):
+    bot.store.create("ticket", "Crash", "Details", {"thread": thread_url(1182)})
+    chat.parents[1182] = QUIET_FORUM
+    react = chat.react_to_start
+
+    async def forbidden(*args, **kwargs):
+        raise RuntimeError("403 Forbidden")
+
+    # Only a reaction: nothing happened, so it can be queued again under the same name
+    monkeypatch.setattr(chat, "react_to_start", forbidden)
+    queue(bot, "done", "DIS-0001", "", react="✅")
+    queue(bot, "fixed", "DIS-0001", "Fixed in 1.7.0.", react="✅")
+    await bot.send_posts()
+    assert not (bot.outbox / "sent" / "done.md").exists()
+    assert "error: 403 Forbidden\n" in (bot.outbox / "failed" / "done.md").read_text()
+    # With a reply: the reply went out and stays sent, the reaction has to be queued alone
+    [post] = chat.in_channel(1182)
+    link = f"{thread_url(1182)}/{post.message_id}"
+    sent = frontmatter((bot.outbox / "sent" / "fixed.md").read_text())[0]
+    assert sent["message"] == link and "reacted" not in sent
+    error = frontmatter((bot.outbox / "failed" / "fixed.md").read_text())[0]["error"]
+    assert error == f"posted {link}, but the reaction failed: 403 Forbidden"
+    ticket = (config.data_dir / "workspace" / "tickets" / "DIS-0001.md").read_text()
+    assert ticket.endswith(f": Clangy posted fixed from the outbox in the thread: {link}\n")
+
+    # A tag that can't be applied doesn't undo the reaction
+    monkeypatch.setattr(chat, "react_to_start", react)
+    monkeypatch.setattr(chat, "add_tag", forbidden)
+    queue(bot, "done", "DIS-0001", "", react="✅")
+    await bot.send_posts()
+    assert chat.reactions == [(1182, 1182, "✅")]
+    sent = frontmatter((bot.outbox / "sent" / "done.md").read_text())[0]
+    assert sent["tag_error"] == "403 Forbidden" and "reaction" in sent
+
+
+async def test_other_reactions_add_no_tag(bot, chat):
+    bot.store.create("ticket", "Crash", "Details", {"thread": thread_url(1183)})
+    chat.parents[1183] = QUIET_FORUM
+    chat.forum_tags[QUIET_FORUM] = ["Completed"]
+    queue(bot, "seen", "DIS-0001", "", react="👀")
+    await bot.send_posts()
+    assert chat.reactions == [(1183, 1183, "👀")] and chat.applied_tags == {}
 
 
 async def test_tickets_go_to_vikunja_when_configured(chat, config):
