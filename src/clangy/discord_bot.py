@@ -69,6 +69,38 @@ class DiscordChat:
         channel = self.client.get_channel(thread_id) or await self.client.fetch_channel(thread_id)
         return channel.parent_id if isinstance(channel, discord.Thread) else None
 
+    async def _thread(self, thread_id: int) -> tuple[discord.Thread, discord.abc.GuildChannel]:
+        thread = await self._channel(thread_id)
+        assert isinstance(thread, discord.Thread)
+        parent = thread.parent or await self.client.fetch_channel(thread.parent_id)
+        assert isinstance(parent, discord.abc.GuildChannel)
+        return thread, parent
+
+    async def react_to_start(self, thread_id: int, emoji: str) -> int:
+        thread, parent = await self._thread(thread_id)
+        if isinstance(parent, discord.ForumChannel):
+            # A reaction doesn't reopen an archived post the way a message does
+            if thread.archived:
+                await thread.edit(archived=False)
+            channel: discord.Thread | discord.TextChannel = thread
+        else:
+            assert isinstance(parent, discord.TextChannel)
+            channel = parent
+        await channel.get_partial_message(thread_id).add_reaction(emoji)
+        return channel.id
+
+    async def add_tag(self, thread_id: int, names: tuple[str, ...]) -> str | None:
+        thread, forum = await self._thread(thread_id)
+        if not isinstance(forum, discord.ForumChannel):
+            return None
+        defined = {t.name.lower(): t for t in forum.available_tags}
+        tag = next((defined[n.lower()] for n in names if n.lower() in defined), None)
+        if tag is None:
+            return None
+        if tag not in thread.applied_tags:
+            await thread.add_tags(tag)
+        return tag.name
+
     async def download(self, attachment: Attachment, path: Path) -> None:
         size = 0
         async with self.http.get(attachment.url) as response:

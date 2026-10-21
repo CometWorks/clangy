@@ -166,6 +166,13 @@ class FakeChat:
         self.unreadable: set[int] = set()
         self.parents: dict[int, int] = {}
         """Thread id to channel id, for thread_parent."""
+        self.from_messages: set[int] = set()
+        """Threads started from a channel message, the others are forum posts."""
+        self.reactions: list[tuple[int, int, str]] = []
+        """Channel, message and emoji of each reaction added."""
+        self.forum_tags: dict[int, list[str]] = {}
+        """The tags each forum defines."""
+        self.applied_tags: dict[int, list[str]] = {}
         self._next_id = 9000
 
     def in_channel(self, channel_id: int) -> list[Sent]:
@@ -200,6 +207,21 @@ class FakeChat:
 
     async def thread_parent(self, thread_id: int) -> int | None:
         return self.parents.get(thread_id)
+
+    async def react_to_start(self, thread_id: int, emoji: str) -> int:
+        channel_id = self.parents[thread_id] if thread_id in self.from_messages else thread_id
+        self.reactions.append((channel_id, thread_id, emoji))
+        return channel_id
+
+    async def add_tag(self, thread_id: int, names: tuple[str, ...]) -> str | None:
+        if thread_id in self.from_messages:
+            return None
+        defined = {t.lower(): t for t in self.forum_tags.get(self.parents[thread_id], [])}
+        tag = next((defined[n.lower()] for n in names if n.lower() in defined), None)
+        applied = self.applied_tags.setdefault(thread_id, [])
+        if tag is not None and tag not in applied:
+            applied.append(tag)
+        return tag
 
     async def download(self, attachment: Attachment, path: Path) -> None:
         if attachment.url not in self.files:
