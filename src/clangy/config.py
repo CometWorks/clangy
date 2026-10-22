@@ -32,6 +32,8 @@ class BackendConfig(Strict):
     """llama.cpp only: save/restore slot KV caches, needs `--slot-save-path` on the server."""
     context_window: int = 131072
     max_tokens: int = 4096
+    images: bool = False
+    """The model takes images. pi omits them from requests otherwise, a read image becomes a note."""
     thinking: str = "off"
     """pi thinking level. On OpenRouter it becomes the `reasoning` effort, `off` turns reasoning off."""
     compat: dict[str, Any] = Field(default_factory=dict)

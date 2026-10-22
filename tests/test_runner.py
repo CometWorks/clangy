@@ -54,6 +54,16 @@ def test_pi_config_points_at_the_bridge(tmp_path):
     assert settings["retry"]["enabled"] is False
 
 
+def test_images_only_for_vision_backends(tmp_path):
+    paths = RunPaths(tmp_path)
+    write_pi_config(paths, BACKEND, 4321, 131072)
+    model = json.loads((paths.agent_dir / "models.json").read_text())["providers"]["clangy"]["models"][0]
+    assert model["input"] == ["text"]
+    write_pi_config(paths, BACKEND.model_copy(update={"images": True}), 4321, 131072)
+    model = json.loads((paths.agent_dir / "models.json").read_text())["providers"]["clangy"]["models"][0]
+    assert model["input"] == ["text", "image"]
+
+
 def test_final_result():
     def end(*messages):
         return {"type": "agent_end", "messages": list(messages)}
