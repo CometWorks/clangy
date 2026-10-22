@@ -93,6 +93,8 @@ def write_pi_config(paths: RunPaths, backend: BackendConfig, port: int, context_
         "id": PI_MODEL,
         # pi sends a thinkingFormat's "thinking off" only to reasoning models; without it Qwen thinks by default
         "reasoning": backend.thinking != "off" or "thinkingFormat" in compat,
+        # pi takes custom models for text only unless told
+        "input": ["text", "image"] if backend.images else ["text"],
         "contextWindow": min(context_window, backend.context_window),
         "maxTokens": backend.max_tokens,
     }

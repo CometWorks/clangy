@@ -69,6 +69,7 @@ Tickets and notes go to a Vikunja project instead of the workspace's `tickets/` 
 | `kind` | `openai` | `llamacpp` enables slot pinning with `id_slot`, and a failed server gets runs again once its health check passes. Other kinds come back after `cooldown`. |
 | `slot_save` | `false` | llama.cpp: save and restore slot KV caches when conversations swap slots. Needs `--slot-save-path` on the server. |
 | `context_window`, `max_tokens` | `131072`, `4096` | Passed to pi. The top-level `context_window` caps the former. |
+| `images` | `false` | The model takes images: pi sends a read image to it. Without it pi leaves images out of the request and the model gets a note that it can't see them. Turn it on only for models that take images, like `openai/gpt-6-luna` and `deepseek/deepseek-v4.1-flash` (OpenRouter's `input_modalities`). |
 | `thinking` | `off` | pi thinking level: `off`, `minimal`, `low`, `medium`, `high`. With `compat.thinkingFormat` set, `off` is sent to the server explicitly; Qwen otherwise thinks by default. An OpenRouter `url` sets `thinkingFormat = "openrouter"`: the level becomes OpenRouter's `reasoning` effort, and `off` sends `effort = "none"`. |
 | `compat` | `{}` | pi `compat` options for the model, e.g. `thinkingFormat = "qwen-chat-template"`. See pi's `docs/models.md`. |
 | `prompt_tps`, `gen_tps` | `300`, `40` | Starting speeds for the ETA. Measured speeds replace them (llama.cpp reports them; cloud APIs don't, so their values stay). |
