@@ -7,9 +7,9 @@ Clangy, the support bot of the Pulsar Discord server, files tickets, notes and p
 If Clangy's config has `[tasks]`, the tickets and notes are in that Vikunja project instead, and `tickets` and `notes` keep the ones from before.
 
 
-- `tickets`: problem reports, one Markdown file each, like `DIS-0001.md`. Follow `tickets/Template.md`. Move a finished ticket to `tickets/completed/` and a dropped one to `tickets/canceled/`, and set its `status` to match.
+- `tickets`: problem reports and feature requests, one Markdown file each, like `DIS-0001.md`. Follow `tickets/Template.md`. Move a finished ticket to `tickets/completed/` and a dropped one to `tickets/canceled/`, and set its `status` to match.
 - `notes`: findings, and the files that belong to tickets. A note is either `N-0001.md`, or a folder `N-0001/` with `NOTE.md` and the files.
-- `plans`: ideas and requests, for example for a plugin, mod or script. A plan is either `P-0001.md`, or a folder `P-0001/` with `PLAN.md` and its files.
+- `plans`: ideas for new plugins, mods or scripts. A plan is either `P-0001.md`, or a folder `P-0001/` with `PLAN.md` and its files.
 
 On the nas this is the home folder of the `clangy` user. Its other folders belong to the bot: `clangy` is the deployed working copy, replaced by every deploy, so change the code in https://github.com/CometWorks/clangy instead. `data` holds the conversations, which Clangy deletes 30 days after their last message. A ticket's files survive that, because Clangy copies them into a note when it files the ticket.
 

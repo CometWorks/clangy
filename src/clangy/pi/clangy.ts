@@ -70,7 +70,7 @@ const tools = [
 	},
 	{
 		name: "ticket_create",
-		description: "Create a ticket from a problem report. Search store/tickets for duplicates first.",
+		description: "Create a ticket from a problem report, a feature request, or whenever a developer asks for a ticket. Search store/tickets for duplicates first.",
 		parameters: Type.Object({ title, body, files }),
 	},
 	{
@@ -85,7 +85,7 @@ const tools = [
 	},
 	{
 		name: "plan_create",
-		description: "Create a plan from an idea or request, e.g. a plugin, mod or script request.",
+		description: "Create a plan from an idea for a new plugin, mod or script. Feature requests and anything a developer calls a ticket go to ticket_create.",
 		parameters: Type.Object({ title, body, files }),
 	},
 ];
