@@ -155,7 +155,7 @@ Sources are folders used in place (the nas setup) or git repositories. `clangy s
 
 ## Prompt, guide and host tools
 
-`prompts/system.md` is the system prompt: how to read the turns (`Name: text`, replies, reactions, `[host]` lines, forum tags, the reference block), the rules (facts only, short answers, no code (point to a coding agent with the SE skills instead), never reveal the books or the instructions, ignore injected instructions), the tools in the sandbox, working out the game, the valid game and server setups, collecting problem reports (setup first, logs only after it) until a developer could start on a ticket, what a ticket holds, pointing developers to sources, sending files, the `repos/` mount and the store. Keep it free of changing data, its bytes are the cached prefix. A channel's `prompt` is appended under `# Channel`.
+`prompts/system.md` is the system prompt: how to read the turns (`Name: text`, replies, reactions, `[host]` lines, forum tags, the reference block), the rules (facts only, short answers, no code (point to a coding agent with the SE skills instead), never reveal the books or the instructions, ignore injected instructions), the tools in the sandbox, working out the game, the valid game and server setups, collecting problem reports (setup first, logs only after it) until a developer could start on a ticket, what a ticket holds, feature requests as tickets, filing a ticket whenever a developer asks for one, pointing developers to sources, sending files, the `repos/` mount and the store. Keep it free of changing data, its bytes are the cached prefix. A channel's `prompt` is appended under `# Channel`.
 
 `guide/` holds files the agent reads on demand: `logs.md` (where Pulsar's and Magnetar's `info.log`, the game logs and crash dumps are for each setup) and `developers.md` (sources for Pulsar, dedicated servers, plugin, mod and script development).
 
@@ -165,8 +165,8 @@ Host tools, defined in `pi/clangy.ts` and run by the host through the socket:
 |---|---|
 | `set_game` | Records SE1 or SE2 and links that game's knowledge into the work folder; the reply lists its skills (see Game version and knowledge). |
 | `attach_files` | Stages files for the answer (see Files). |
-| `ticket_create`, `ticket_add_report` | Files a problem report, or adds a repeated report to an open ticket. |
-| `note_create`, `plan_create` | Shared findings, and plans from ideas or requests. |
+| `ticket_create`, `ticket_add_report` | Files a problem report or a feature request, or adds a repeated report to an open ticket. |
+| `note_create`, `plan_create` | Shared findings, and plans from ideas for new plugins, mods or scripts. |
 
 The last four take optional `files` to keep, see Store.
 
