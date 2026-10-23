@@ -2,7 +2,7 @@
 
 Clangy v2, the support bot of the [Pulsar](https://github.com/SpaceGT/Pulsar) Discord server. It collects what developers need from bug reports, files tickets, and points plugin, mod and script developers to the right resources, for both Space Engineers 1 and 2.
 
-Each Discord thread runs a [pi](https://pi.dev) agent in its own firejail sandbox. The answers come from OpenAI compatible backends by priority: OpenRouter's free models, our own llama.cpp server, and paid models as the last resort.
+Each Discord thread runs a [pi](https://pi.dev) agent in its own firejail sandbox. The answers come from OpenAI compatible backends by priority: our own llama.cpp server first, paid models when it fails or is busy.
 
 ## Quick start
 

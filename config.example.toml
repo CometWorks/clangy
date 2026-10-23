@@ -31,13 +31,14 @@ read_only = ["/opt/node"]
 [[backends]]
 name = "r9700"
 url = "http://192.168.1.20:8080/v1"
-model = "qwen3.8-27b-q5"
+model = "qwen38v-Q5"
 kind = "llamacpp"
 priority = 2
 parallel = 2
 slot_save = true
-context_window = 131072
+context_window = 167936
 max_tokens = 4096
+images = true          # llama.cpp loads the vision projector (--mmproj)
 thinking = "low"
 compat = { thinkingFormat = "qwen-chat-template" }
 prompt_tps = 300.0
@@ -53,7 +54,7 @@ gen_tps = 40.0
 # # api_key = "sk-or-..."   # or api_key_env = "OPENROUTER_API_KEY"
 # priority = 1
 # parallel = 2              # a run makes roughly 7-11 requests
-# context_window = 262144
+# context_window = 167936
 # max_tokens = 4096
 # thinking = "minimal"     # becomes the reasoning effort; Qwen3.8-27B skips the setup checklist without it
 # prompt_tps = 2000.0
@@ -74,7 +75,7 @@ gen_tps = 40.0
 # # api_key = "sk-or-..."   # or api_key_env = "OPENROUTER_API_KEY"
 # priority = 8
 # parallel = 2
-# context_window = 400000
+# context_window = 167936
 # max_tokens = 8192
 # images = true          # OpenRouter lists image input for it
 # thinking = "off"
@@ -93,7 +94,7 @@ gen_tps = 40.0
 # # api_key = "sk-or-..."   # or api_key_env = "OPENROUTER_API_KEY"
 # priority = 9
 # parallel = 2
-# context_window = 400000
+# context_window = 167936
 # max_tokens = 8192
 # images = true          # OpenRouter lists image input for it
 # thinking = "off"
