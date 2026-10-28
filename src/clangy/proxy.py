@@ -1,7 +1,7 @@
 """Per-run host server on a unix socket: the sandbox's only way out.
 
-It forwards chat completions to the run's backend, holding the API key on the host,
-and serves the host-side tools (tickets, notes, plans, game version).
+It forwards model requests (chat completions or Anthropic messages) to the run's backend, holding the API key on
+the host, and serves the host-side tools (tickets, notes, plans, game version).
 """
 
 import asyncio
@@ -28,6 +28,7 @@ ToolHandler = Callable[[str, dict], Awaitable[str]]
 FAILED_STATUSES = {401, 402, 403, 404, 408, 429}
 """Besides 5xx: the backend can't serve now (key, credit or model unavailable, timeout, rate limit), unlike a
 request it rejects (400). Another backend may answer."""
+ANTHROPIC_BETA = "anthropic-beta"
 MIN_SPEED_SAMPLE = 500
 """Prompt tokens a request must process to count as a speed sample."""
 
@@ -45,6 +46,8 @@ class RunStats:
     backend_failed: bool = False
     retry_after: float | None = None
     """Longest Retry-After the backend sent with a failure."""
+    refusal: str | None = None
+    """The category of a refusal by the model, `unknown` if it gave none."""
     per_request: list[dict] = field(default_factory=list)
 
 
@@ -72,8 +75,32 @@ def _usage_from_event(event: dict, stats: dict) -> None:
             stats["cached_tokens"] = timings["cache_n"]
 
 
+def _anthropic_usage_from_event(event: dict, stats: dict) -> None:
+    """message_start carries the input tokens, message_delta the output tokens. Cached input isn't in input_tokens."""
+    message = event.get("message") or {}
+    usage = event.get("usage") or message.get("usage") or {}
+    if "input_tokens" in usage:
+        cached = usage.get("cache_read_input_tokens") or 0
+        stats["prompt_tokens"] = usage["input_tokens"] + cached + (usage.get("cache_creation_input_tokens") or 0)
+        stats["cached_tokens"] = cached
+    if "output_tokens" in usage:
+        stats["completion_tokens"] = usage["output_tokens"]
+    if message.get("model"):
+        stats["model"] = message["model"]
+
+
+def _refusal(event: dict) -> str | None:
+    """The category of an Anthropic refusal, which ends the message with stop_reason refusal."""
+    delta = event.get("delta") or {}
+    if event.get("type") != "message_delta" or delta.get("stop_reason") != "refusal":
+        return None
+    details = delta.get("stop_details") or event.get("stop_details") or {}
+    return details.get("category") or "unknown"
+
+
 def _stream_error(event: dict) -> str | None:
-    """An error sent inside a stream that started with HTTP 200, as OpenRouter does when a provider fails."""
+    """An error sent inside a stream that started with HTTP 200, as OpenRouter does when a provider fails and
+    Anthropic when it's overloaded."""
     if error := event.get("error"):
         return f"stream error: {json.dumps(error)[:500]}"
     if any(choice.get("finish_reason") == "error" for choice in event.get("choices") or []):
@@ -81,8 +108,12 @@ def _stream_error(event: dict) -> str | None:
     return None
 
 
-def _sse(payload: dict) -> bytes:
-    return f"data: {json.dumps(payload)}\n\n".encode()
+def _sse_error(message: str, anthropic: bool) -> bytes:
+    """An error event that ends pi's turn, in the stream format of the backend's API."""
+    if anthropic:
+        payload = {"type": "error", "error": {"type": "api_error", "message": message}}
+        return f"event: error\ndata: {json.dumps(payload)}\n\n".encode()
+    return f"data: {json.dumps({'error': {'message': message}})}\n\n".encode()
 
 
 def speed_samples(timings: dict) -> tuple[float | None, float | None]:
@@ -154,6 +185,7 @@ class HostServer:
         self.socket_path = socket_path
         app = web.Application(client_max_size=64 * 1024**2)
         app.router.add_post("/v1/chat/completions", self._chat)
+        app.router.add_post("/v1/messages", self._chat)
         app.router.add_post("/tools/{name}", self._tool)
         self._runner = web.AppRunner(app, access_log=None)
 
@@ -192,9 +224,16 @@ class HostServer:
         if run.slot is not None:
             body["id_slot"] = run.slot
             body["cache_prompt"] = True
-        headers = {"Content-Type": "application/json", **backend.headers}
-        if run.backend.api_key:
-            headers["Authorization"] = f"Bearer {run.backend.api_key}"
+        headers = {"Content-Type": "application/json", **backend.headers, **run.backend.auth_headers()}
+        # pi's API version and betas, which its request body is written for; the config's betas are added
+        if version := request.headers.get("anthropic-version"):
+            headers["anthropic-version"] = version
+        betas = [headers.get(ANTHROPIC_BETA), request.headers.get(ANTHROPIC_BETA)]
+        if any(betas):
+            headers[ANTHROPIC_BETA] = ",".join(b for b in betas if b)
+        anthropic = backend.kind == "anthropic"
+        usage_from_event = _anthropic_usage_from_event if anthropic else _usage_from_event
+        url = backend.url + request.path.removeprefix("/v1")
 
         started = time.monotonic()
         stats: dict = {"time": datetime.now(timezone.utc).isoformat(timespec="milliseconds"), "slot": run.slot}
@@ -203,7 +242,7 @@ class HostServer:
         loop = asyncio.get_running_loop()
         try:
             async with asyncio.timeout(backend.first_byte_timeout) as limit:
-                async with run.session.post(f"{backend.url}/chat/completions", json=body, headers=headers) as upstream:
+                async with run.session.post(url, json=body, headers=headers) as upstream:
                     stats["status"] = upstream.status
                     response = web.StreamResponse(
                         status=upstream.status, headers={"Content-Type": upstream.content_type}
@@ -216,12 +255,16 @@ class HostServer:
                         # Only data counts: OpenRouter sends keep-alive comments while a stuck provider is silent
                         if not line.startswith(b"data: {"):
                             continue
+                        event = json.loads(line[6:])
+                        if event.get("type") == "ping":
+                            continue  # Anthropic's keep-alive
                         if first_token is None:
                             first_token = time.monotonic()
                         stall = backend.stall_timeout
                         limit.reschedule(loop.time() + stall if stall else None)
-                        event = json.loads(line[6:])
-                        _usage_from_event(event, stats)
+                        usage_from_event(event, stats)
+                        if anthropic and (refusal := _refusal(event)):
+                            stats["refusal"] = run.stats.refusal = refusal
                         if error := _stream_error(event):
                             self._failed(stats, error)
                     await response.write_eof()
@@ -233,7 +276,7 @@ class HostServer:
                 return web.json_response({"error": {"message": f"backend unreachable: {e!r}"}}, status=502)
             with suppress(ConnectionError):
                 # Ends pi's turn with an error instead of a cut-off answer it would take as complete
-                await response.write(_sse({"error": {"message": f"backend failed: {stats['error']}"}}))
+                await response.write(_sse_error(f"backend failed: {stats['error']}", anthropic))
             return response
         self._record(stats, started, first_token)
         return response

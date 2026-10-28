@@ -17,6 +17,10 @@ def sse(payload: dict) -> bytes:
     return f"data: {json.dumps(payload)}\n\n".encode()
 
 
+def anthropic_sse(payload: dict) -> bytes:
+    return f"event: {payload['type']}\ndata: {json.dumps(payload)}\n\n".encode()
+
+
 @dataclass
 class Reply:
     text: str = ""
@@ -26,7 +30,7 @@ class Reply:
 
 
 class FakeBackend:
-    """Scripted OpenAI compatible server with the llama.cpp extras Clangy uses."""
+    """Scripted OpenAI compatible server with the llama.cpp extras Clangy uses, and the Anthropic Messages API."""
 
     def __init__(self) -> None:
         self.replies: list[Reply] = []
@@ -43,6 +47,8 @@ class FakeBackend:
         self.stream_error = False
         """Fails inside the stream after HTTP 200, like OpenRouter when a provider fails."""
         self.answering_model: str | None = None
+        self.refuse: str | None = None
+        """Anthropic Messages: the model refuses with this category."""
         self.prompt_tokens = 100
         self.cached_tokens = 80
         self.processed_tokens = 1000
@@ -56,6 +62,7 @@ class FakeBackend:
     async def start(self) -> None:
         app = web.Application()
         app.router.add_post("/v1/chat/completions", self._chat)
+        app.router.add_post("/v1/messages", self._messages)
         app.router.add_get("/v1/models", self._models)
         app.router.add_post("/slots/{slot}", self._slot)
         self._runner = web.AppRunner(app)
@@ -132,6 +139,64 @@ class FakeBackend:
         timings |= {"prompt_per_second": 500.0, "predicted_per_second": 50.0}
         await response.write(sse({**chunk, "choices": [], "usage": usage, "timings": timings}))
         await response.write(b"data: [DONE]\n\n")
+        return response
+
+    async def _messages(self, request: web.Request) -> web.StreamResponse:
+        body = await request.json()
+        self.requests.append(body)
+        self.headers.append(dict(request.headers))
+        if self.status != 200:
+            headers = {"Retry-After": self.retry_after} if self.retry_after else None
+            error = {"type": "error", "error": {"type": "overloaded_error", "message": "unavailable"}}
+            return web.json_response(error, status=self.status, headers=headers)
+        response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+        await response.prepare(request)
+        await response.write(anthropic_sse({"type": "ping"}))
+        await asyncio.sleep(self.stall_first)
+        if self.stream_error:
+            await response.write(
+                anthropic_sse({"type": "error", "error": {"type": "overloaded_error", "message": "x"}})
+            )
+            return response
+        usage = {
+            "input_tokens": self.prompt_tokens - self.cached_tokens,
+            "cache_read_input_tokens": self.cached_tokens,
+            "cache_creation_input_tokens": 0,
+            "output_tokens": 1,
+        }
+        message = {"id": f"msg_{len(self.requests)}", "type": "message", "role": "assistant", "content": []}
+        message |= {"model": self.answering_model or body["model"], "stop_reason": None, "usage": usage}
+        await response.write(anthropic_sse({"type": "message_start", "message": message}))
+        reply = self.replies.pop(0) if self.replies else Reply("Hello from the fake backend.")
+        blocks: list[tuple[dict, dict]] = []
+        if reply.reasoning:
+            thinking = {"type": "thinking", "thinking": "", "signature": ""}
+            blocks.append((thinking, {"type": "thinking_delta", "thinking": reply.reasoning}))
+            blocks.append((thinking, {"type": "signature_delta", "signature": "sig"}))
+        if reply.tool:
+            call = {"type": "tool_use", "id": f"toolu_{len(self.requests)}", "name": reply.tool, "input": {}}
+            blocks.append((call, {"type": "input_json_delta", "partial_json": json.dumps(reply.arguments)}))
+        else:
+            blocks.append(({"type": "text", "text": ""}, {"type": "text_delta", "text": reply.text}))
+        index, started = 0, None
+        for block, delta in blocks:
+            if started is not None and started is not block:
+                await response.write(anthropic_sse({"type": "content_block_stop", "index": index}))
+                index += 1
+            if started is not block:
+                await response.write(
+                    anthropic_sse({"type": "content_block_start", "index": index, "content_block": block})
+                )
+                started = block
+            await response.write(anthropic_sse({"type": "content_block_delta", "index": index, "delta": delta}))
+            await asyncio.sleep(self.stall_mid)
+        await response.write(anthropic_sse({"type": "content_block_stop", "index": index}))
+        stop = {"stop_reason": "tool_use" if reply.tool else "end_turn", "stop_sequence": None}
+        if self.refuse:
+            stop = {"stop_reason": "refusal", "stop_sequence": None}
+            stop["stop_details"] = {"type": "refusal", "category": self.refuse, "explanation": "declined"}
+        await response.write(anthropic_sse({"type": "message_delta", "delta": stop, "usage": {"output_tokens": 7}}))
+        await response.write(anthropic_sse({"type": "message_stop"}))
         return response
 
 

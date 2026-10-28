@@ -196,3 +196,144 @@ async def test_pi_fails_over_when_the_stream_breaks(tmp_path, backend, backend2,
     assert len(backend.requests) == 1
     assert chat.in_channel(2005)[0].current.startswith("Answer from the other backend.")
     assert bot.conversations[2005].backend == "local"
+
+
+async def test_claude_run_with_tool_and_cached_prefix(tmp_path, backend, chat):
+    assert PI is not None
+    # As in deploy/clangy.toml
+    claude = BackendConfig(
+        name="claude",
+        url=backend.url,
+        model="claude-sonnet-5-5",
+        kind="anthropic",
+        api_key="k",
+        thinking="medium",
+        compat={"supportsMidConvoEffort": True},
+        extra_body={"fallbacks": "default"},
+        headers={"anthropic-beta": "server-side-fallback-2026-07-01"},
+    )
+    config = Config(
+        data_dir=tmp_path,
+        backends=[claude],
+        channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True)],
+        sandbox=SandboxConfig(firejail=False, path=os.environ["PATH"]),
+        run_deadline=60,
+    )
+    backend.replies = [
+        Reply(reasoning="Let me look.", tool="bash", arguments={"command": "echo hi"}),
+        Reply(reasoning="Easy.", text="Claude answer."),
+        Reply("Second answer."),
+    ]
+    bot = Clangy(config, chat)
+    await bot.on_message(forum_post(SUPPORT, 2006, "My game crashes"))
+    await bot.wait_idle()
+    await bot.on_message(message(2006, "@Clangy thanks", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
+    await bot.close()
+    assert chat.in_channel(2006)[0].current.startswith("Claude answer.")
+    assert chat.in_channel(2006)[1].current.startswith("Second answer.")
+    first, second = backend.requests[:2]
+    assert first["model"] == "claude-sonnet-5-5" and first["system"][0]["text"] == SYSTEM_PROMPT.read_text()
+    assert "temperature" not in first and first["fallbacks"] == "default"
+    # Thinking blocks after the history edit by replace_answer are dropped instead of failing the request
+    assert first["thinking"]["block_binding"] == {"prefix_mismatch_behavior": "drop_block"}
+    assert first["messages"][-1] == {"role": "system", "content": [], "output_config": {"effort": "medium"}}
+    assert all(h["x-api-key"] == "k" for h in backend.headers), "the key is added on the host"
+    betas = backend.headers[0]["anthropic-beta"].split(",")
+    assert {"server-side-fallback-2026-07-01", "thinking-binding-controls-2026-08-01"} <= set(betas)
+    assert "cache_control" in json.dumps(first["messages"]), "pi marks the prefix for Anthropic's prompt cache"
+    call, result = [m for m in second["messages"] if m["role"] != "system"][-2:]
+    assert [b["type"] for b in call["content"]] == ["thinking", "tool_use"], "signed thinking goes back unchanged"
+    assert result["content"][0]["tool_use_id"] == call["content"][1]["id"] == "toolu_1"
+    run = json.loads((bot.conversation_dir(2006) / "metrics.jsonl").read_text().splitlines()[0])
+    assert run["prompt_tokens"] == 200 and run["requests"][0]["model"] == "claude-sonnet-5-5"
+
+
+async def test_session_moves_between_qwen_and_claude(tmp_path, backend, backend2, chat):
+    assert PI is not None
+    config = Config(
+        data_dir=tmp_path,
+        backends=[
+            BackendConfig(name="local", url=backend.url, model="m", kind="llamacpp"),
+            BackendConfig(name="claude", url=backend2.url, model="claude-sonnet-5-5", kind="anthropic", priority=2),
+        ],
+        channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True)],
+        sandbox=SandboxConfig(firejail=False, path=os.environ["PATH"]),
+        run_deadline=60,
+    )
+    backend.replies = [
+        Reply(reasoning="Qwen thinks.", tool="bash", arguments={"command": "echo hi"}),
+        Reply("First answer."),
+        Reply("Third answer."),
+    ]
+    backend2.replies = [Reply(reasoning="Claude thinks.", text="Second answer.")]
+    bot = Clangy(config, chat)
+    await bot.on_message(forum_post(SUPPORT, 2007, "My game crashes"))
+    await bot.wait_idle()
+    backend.status = 503
+    await bot.on_message(message(2007, "@Clangy thanks", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
+    backend.status = 200
+    bot.backends["local"].healthy = True
+    await bot.on_message(message(2007, "@Clangy one more", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
+    await bot.close()
+    assert [m.current.split("\n")[0] for m in chat.in_channel(2007)] == [
+        "First answer.",
+        "Second answer.",
+        "Third answer.",
+    ]
+    moved = json.dumps(backend2.requests[0]["messages"])
+    assert "Qwen thinks." not in moved, "another model's reasoning is dropped, not sent as answer text"
+    assert '"type": "tool_use"' in moved and '"type": "tool_result"' in moved and "First answer." in moved
+    back = json.dumps(backend.requests[-1]["messages"])
+    assert "Second answer." in back and "Claude thinks." not in back
+
+
+async def test_claude_overloaded_fails_over(tmp_path, backend, backend2, chat):
+    assert PI is not None
+    config = Config(
+        data_dir=tmp_path,
+        backends=[
+            BackendConfig(name="claude", url=backend.url, model="claude-sonnet-5-5", kind="anthropic"),
+            BackendConfig(name="local", url=backend2.url, model="m", kind="llamacpp", priority=2),
+        ],
+        channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True)],
+        sandbox=SandboxConfig(firejail=False, path=os.environ["PATH"]),
+        run_deadline=60,
+    )
+    backend.stream_error = True
+    backend2.replies = [Reply("Answer from the other backend.")]
+    bot = Clangy(config, chat)
+    await bot.on_message(forum_post(SUPPORT, 2008, "My game crashes"))
+    await bot.wait_idle()
+    await bot.close()
+    assert len(backend.requests) == 1
+    assert chat.in_channel(2008)[0].current.startswith("Answer from the other backend.")
+
+
+async def test_claude_refusal_goes_to_the_local_model(tmp_path, backend, backend2, chat):
+    assert PI is not None
+    config = Config(
+        data_dir=tmp_path,
+        backends=[
+            BackendConfig(name="claude", url=backend.url, model="claude-sonnet-5-5", kind="anthropic", thinking="low"),
+            BackendConfig(
+                name="local", url=backend2.url, model="m", kind="llamacpp", priority=2, refusal_fallback=True
+            ),
+        ],
+        channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True)],
+        sandbox=SandboxConfig(firejail=False, path=os.environ["PATH"]),
+        run_deadline=60,
+    )
+    backend.refuse = "cyber"
+    backend.replies = [Reply("Refused text that must not be posted.")]
+    backend2.replies = [Reply("Answer from the local model.")]
+    bot = Clangy(config, chat)
+    await bot.on_message(forum_post(SUPPORT, 2009, "How do I hook this method?"))
+    await bot.wait_idle()
+    await bot.close()
+    assert chat.in_channel(2009)[0].current.startswith("Answer from the local model.")
+    assert "Refused text" not in json.dumps(backend2.requests[0]["messages"]), "the refused turn is dropped"
+    first = json.loads((bot.conversation_dir(2009) / "metrics.jsonl").read_text().splitlines()[0])
+    assert first["refusal"] == "cyber" and first["backend"] == "claude"

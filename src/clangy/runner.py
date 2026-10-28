@@ -22,8 +22,8 @@ HOST_TOOLS = ["set_game", "attach_files", "ticket_create", "ticket_add_report", 
 """Registered by pi/clangy.ts. pi 1.x applies --tools to extension tools too, so they must be listed."""
 TOOLS = ",".join(["read", "grep", "find", "ls", "bash", *HOST_TOOLS])
 PI_MODEL = "clangy"
-"""The model id pi sees on every backend; the host sets the real one. pi turns the reasoning of another model's
-turns into plain text, which would happen whenever a conversation moves between backends."""
+"""The model id pi sees on every backend; the host sets the real one. pi drops the reasoning of another model's
+turns, which would happen whenever a conversation moves between backends."""
 STDERR_LOG_LIMIT = 64 * 1024
 """Characters of pi's stderr logged when it fails; tools may print the whole prompt before the actual error."""
 STDERR_ERROR_LIMIT = 4000
@@ -85,22 +85,29 @@ class RunResult:
 def write_pi_config(paths: RunPaths, backend: BackendConfig, port: int, context_window: int) -> None:
     """Writes pi's model and settings files, pointing inference at the host bridge."""
     paths.agent_dir.mkdir(parents=True, exist_ok=True)
-    compat = {"supportsDeveloperRole": False, **backend.compat}
+    if backend.kind == "anthropic":
+        # pi can't tell the model from its id: current Claude models think adaptively and refuse temperature
+        compat = {"forceAdaptiveThinking": True, "supportsTemperature": False, **backend.compat}
+        # The Anthropic SDK appends /v1/messages itself
+        api, base_url = "anthropic-messages", f"http://127.0.0.1:{port}"
+    else:
+        compat = {"supportsDeveloperRole": False, **backend.compat}
+        api, base_url = "openai-completions", f"http://127.0.0.1:{port}/v1"
     if "openrouter.ai" in backend.url:
         # pi can't tell from the bridge's URL; this makes thinking OpenRouter's reasoning effort, "off" is "none"
         compat.setdefault("thinkingFormat", "openrouter")
     model = {
         "id": PI_MODEL,
-        # pi sends a thinkingFormat's "thinking off" only to reasoning models; without it Qwen thinks by default
-        "reasoning": backend.thinking != "off" or "thinkingFormat" in compat,
+        # pi sends "thinking off" only to reasoning models; without it Qwen and Claude think by default
+        "reasoning": backend.thinking != "off" or "thinkingFormat" in compat or backend.kind == "anthropic",
         # pi takes custom models for text only unless told
         "input": ["text", "image"] if backend.images else ["text"],
         "contextWindow": min(context_window, backend.context_window),
         "maxTokens": backend.max_tokens,
     }
     provider = {
-        "baseUrl": f"http://127.0.0.1:{port}/v1",
-        "api": "openai-completions",
+        "baseUrl": base_url,
+        "api": api,
         "apiKey": "unused",
         "compat": compat,
         "models": [model],
