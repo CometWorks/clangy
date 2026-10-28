@@ -44,6 +44,8 @@ class BackendConfig(Strict):
     """Merged into every model request, e.g. OpenRouter's `models` and `provider`."""
     headers: dict[str, str] = Field(default_factory=dict)
     """Sent with every model request, over the top-level headers."""
+    refusal_fallback: bool = False
+    """Takes over a run whose model refused it, e.g. the local model for Claude's refusals."""
     first_byte_timeout: float | None = None
     """A request fails if no data arrives for this long. Not for llama.cpp, it's silent while reading a prompt."""
     stall_timeout: float | None = None

@@ -251,6 +251,13 @@ async def test_anthropic_pings_are_no_first_data(backend, tmp_path):
     assert body.endswith('"}}\n\n') and "event: error\n" in body, "pi's Anthropic SDK reads only named error events"
 
 
+async def test_anthropic_refusal_is_recorded_but_no_backend_failure(backend, tmp_path):
+    backend.refuse = "cyber"
+    run, _ = await messages_once(claude(backend.url), tmp_path)
+    assert run.stats.refusal == "cyber" and run.stats.per_request[0]["refusal"] == "cyber"
+    assert not run.stats.backend_failed
+
+
 async def test_anthropic_overloaded_inside_the_stream_fails(backend, tmp_path):
     backend.stream_error = True
     run, _ = await messages_once(claude(backend.url), tmp_path)

@@ -134,6 +134,8 @@ class Conversation(BaseModel):
     failovers: int = 0
     """Runs moved to another backend right after a failure, since the last retry, mention or answer."""
     runs: int = 0
+    refusal_fallback: str = ""
+    """The backend the next run goes to because the model of this one refused it."""
     host_notes: list[str] = Field(default_factory=list)
     known: dict[int, KnownMessage] = Field(default_factory=dict)
     sent_files: list[str] = Field(default_factory=list)
@@ -791,6 +793,9 @@ class Clangy:
         if not available:
             return None, None
         current = self.backends.get(conv.backend)
+        fallback, conv.refusal_fallback = self.backends.get(conv.refusal_fallback), ""
+        if fallback in available:
+            return fallback, "refusal"
 
         def eta(backend: Backend) -> float:
             tokens = new_tokens if backend is current else conv.context_tokens + new_tokens
@@ -845,8 +850,19 @@ class Clangy:
             return
         shutil.rmtree(outbox.staging, ignore_errors=True)
         self._restore_session(conv)
+        now = time.monotonic()
+        fallbacks = [
+            b for b in self.backends.values() if b.config.refusal_fallback and b is not backend and b.available(now)
+        ]
+        if stats.refusal and fallbacks and conv.failovers < len(self.backends) - 1:
+            # The model refused; a fallback model gets the same turn right away, the refusal isn't posted
+            conv.refusal_fallback = min(fallbacks, key=lambda b: b.config.priority).name
+            log.info("Backend %s refused (%s), %s takes over", backend.name, stats.refusal, conv.refusal_fallback)
+            conv.failovers += 1
+            self.save(conv)
+            self.trigger(conv)
+            return
         if stats.backend_failed:
-            now = time.monotonic()
             backend.mark_failed(now, stats.retry_after)
             if conv.failovers < len(self.backends) - 1 and any(b.available(now) for b in self.backends.values()):
                 # Another backend takes over right away, even though it has to read the whole conversation. Users
@@ -1225,6 +1241,7 @@ class Clangy:
             "ok": result.answer is not None,
             "timed_out": result.timed_out,
             "backend_failed": stats.backend_failed,
+            "refusal": stats.refusal,
             "error": result.error,
             "answer_chars": len(result.answer or ""),
             "tools": result.tools,

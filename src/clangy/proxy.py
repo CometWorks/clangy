@@ -46,6 +46,8 @@ class RunStats:
     backend_failed: bool = False
     retry_after: float | None = None
     """Longest Retry-After the backend sent with a failure."""
+    refusal: str | None = None
+    """The category of a refusal by the model, `unknown` if it gave none."""
     per_request: list[dict] = field(default_factory=list)
 
 
@@ -85,6 +87,15 @@ def _anthropic_usage_from_event(event: dict, stats: dict) -> None:
         stats["completion_tokens"] = usage["output_tokens"]
     if message.get("model"):
         stats["model"] = message["model"]
+
+
+def _refusal(event: dict) -> str | None:
+    """The category of an Anthropic refusal, which ends the message with stop_reason refusal."""
+    delta = event.get("delta") or {}
+    if event.get("type") != "message_delta" or delta.get("stop_reason") != "refusal":
+        return None
+    details = delta.get("stop_details") or event.get("stop_details") or {}
+    return details.get("category") or "unknown"
 
 
 def _stream_error(event: dict) -> str | None:
@@ -252,6 +263,8 @@ class HostServer:
                         stall = backend.stall_timeout
                         limit.reschedule(loop.time() + stall if stall else None)
                         usage_from_event(event, stats)
+                        if anthropic and (refusal := _refusal(event)):
+                            stats["refusal"] = run.stats.refusal = refusal
                         if error := _stream_error(event):
                             self._failed(stats, error)
                     await response.write_eof()

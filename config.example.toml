@@ -43,6 +43,7 @@ thinking = "low"
 compat = { thinkingFormat = "qwen-chat-template" }
 prompt_tps = 300.0
 gen_tps = 40.0
+refusal_fallback = true  # takes over the runs Claude refuses
 
 # Claude Sonnet 5.5 on the Anthropic API, next after the llama.cpp server. The key goes into api_key (keep this file
 # mode 600) or the environment variable named by api_key_env.
@@ -60,9 +61,6 @@ gen_tps = 40.0
 # thinking = "medium"      # the effort of its adaptive thinking; Sonnet 5.5 refuses "off"
 # # Effort as system messages, and thinking blocks dropped instead of a 400 once replace_answer edited the history
 # compat = { supportsMidConvoEffort = true }
-# # Refusals in the cyber and frontier_llm categories are answered by Claude Sonnet 5 in the same request
-# extra_body = { fallbacks = "default" }
-# headers = { "anthropic-beta" = "server-side-fallback-2026-07-01" }
 # prompt_tps = 3000.0
 # gen_tps = 80.0
 # first_byte_timeout = 60

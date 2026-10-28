@@ -310,3 +310,30 @@ async def test_claude_overloaded_fails_over(tmp_path, backend, backend2, chat):
     await bot.close()
     assert len(backend.requests) == 1
     assert chat.in_channel(2008)[0].current.startswith("Answer from the other backend.")
+
+
+async def test_claude_refusal_goes_to_the_local_model(tmp_path, backend, backend2, chat):
+    assert PI is not None
+    config = Config(
+        data_dir=tmp_path,
+        backends=[
+            BackendConfig(name="claude", url=backend.url, model="claude-sonnet-5-5", kind="anthropic", thinking="low"),
+            BackendConfig(
+                name="local", url=backend2.url, model="m", kind="llamacpp", priority=2, refusal_fallback=True
+            ),
+        ],
+        channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True)],
+        sandbox=SandboxConfig(firejail=False, path=os.environ["PATH"]),
+        run_deadline=60,
+    )
+    backend.refuse = "cyber"
+    backend.replies = [Reply("Refused text that must not be posted.")]
+    backend2.replies = [Reply("Answer from the local model.")]
+    bot = Clangy(config, chat)
+    await bot.on_message(forum_post(SUPPORT, 2009, "How do I hook this method?"))
+    await bot.wait_idle()
+    await bot.close()
+    assert chat.in_channel(2009)[0].current.startswith("Answer from the local model.")
+    assert "Refused text" not in json.dumps(backend2.requests[0]["messages"]), "the refused turn is dropped"
+    first = json.loads((bot.conversation_dir(2009) / "metrics.jsonl").read_text().splitlines()[0])
+    assert first["refusal"] == "cyber" and first["backend"] == "claude"

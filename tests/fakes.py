@@ -47,6 +47,8 @@ class FakeBackend:
         self.stream_error = False
         """Fails inside the stream after HTTP 200, like OpenRouter when a provider fails."""
         self.answering_model: str | None = None
+        self.refuse: str | None = None
+        """Anthropic Messages: the model refuses with this category."""
         self.prompt_tokens = 100
         self.cached_tokens = 80
         self.processed_tokens = 1000
@@ -190,6 +192,9 @@ class FakeBackend:
             await asyncio.sleep(self.stall_mid)
         await response.write(anthropic_sse({"type": "content_block_stop", "index": index}))
         stop = {"stop_reason": "tool_use" if reply.tool else "end_turn", "stop_sequence": None}
+        if self.refuse:
+            stop = {"stop_reason": "refusal", "stop_sequence": None}
+            stop["stop_details"] = {"type": "refusal", "category": self.refuse, "explanation": "declined"}
         await response.write(anthropic_sse({"type": "message_delta", "delta": stop, "usage": {"output_tokens": 7}}))
         await response.write(anthropic_sse({"type": "message_stop"}))
         return response

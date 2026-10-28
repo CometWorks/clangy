@@ -131,6 +131,8 @@ The proxy flags a backend failure on a connection error, HTTP 401, 402, 403, 404
 
 The failed backend is marked unavailable and the run starts again right away on another one. Users see no warning, only the new ETA in the progress message. Each failure moves the run on at most once per other backend; when no backend is available, or that many failed, the progress message says the backend was lost and the conversation waits. A llama.cpp server comes back when its health check (`GET /v1/models`, every `health_interval`, and right away when a run finds no backend) answers. Other kinds come back after `cooldown`, or the `Retry-After` they sent: OpenRouter's model list answers even while every free model is rate limited, so it proves nothing. The cooldown doubles with each further failure in a row, up to `max_cooldown`, and a successful run resets it, so a free model that stays overloaded or rate limited for hours doesn't cost every question a failed run. Every `health_interval` the waiting conversations run again once any backend is available.
 
+A model's refusal (Claude's `stop_reason` `refusal`) isn't a backend failure. The run is dropped the same way and repeated right away on the most preferred available backend marked `refusal_fallback`, which on the nas is polaris. The conversation goes back to its preferred backend on the next run. These moves count toward the same limit as failovers. Without a fallback the run fails like any other.
+
 Only runs after such a wait are retries. They count up to `max_retries` from the last mention or answer. After the last failure Clangy asks the user to mention it, and there are no more automatic retries. The conversations to retry come from the persisted state, so this also works across restarts.
 
 A llama.cpp slot owned by a conversation that moved away is simply taken over by the next one.
@@ -262,12 +264,12 @@ Every run, answered or not, appends one JSON line to its conversation's `metrics
 | `time`, `thread_id`, `channel_id`, `game`, `backend`, `model`, `run` | When and where. `model` is the configured one; `run` counts the conversation's answered runs. |
 | `answered_by` | The models that actually answered the run's requests, from the stream's `model` field. With OpenRouter's `models` list these can differ from `model`, even within one run. |
 | `backend_switch` | Present when the run moved the conversation: `from` (null for a new conversation) and `reason` (`new`, `failure`, `priority` or `balance`). |
-| `ok`, `timed_out`, `backend_failed`, `error` | Outcome. `error` holds pi's error or exit status. |
+| `ok`, `timed_out`, `backend_failed`, `refusal`, `error` | Outcome. `refusal` is the category of a model's refusal, `error` holds pi's error or exit status. |
 | `answer_chars`, `tools`, `steps` | Answer length, the tools called in order, model turns. |
 | `predicted_seconds`, `queue_seconds`, `run_seconds`, `total_seconds` | The ETA at trigger time, the wait for the backend, the run itself, and trigger to answer. |
 | `prompt_estimate` | The prompt token estimate behind the ETA. |
 | `prompt_tokens`, `cached_tokens`, `completion_tokens` | Sums over the run's requests. |
-| `requests` | One entry per backend request: `time`, `slot`, `status`, `model`, `seconds`, `first_token_seconds`, `prompt_tokens`, `cached_tokens`, `completion_tokens`, the backend's raw `timings` (llama.cpp: `prompt_n`, `prompt_ms`, `prompt_per_second`, `predicted_n`, `predicted_per_second`, `cache_n`, ...), and `error` if it failed. |
+| `requests` | One entry per backend request: `time`, `slot`, `status`, `model`, `seconds`, `first_token_seconds`, `prompt_tokens`, `cached_tokens`, `completion_tokens`, the backend's raw `timings` (llama.cpp: `prompt_n`, `prompt_ms`, `prompt_per_second`, `predicted_n`, `predicted_per_second`, `cache_n`, ...), `refusal` if the model refused, and `error` if it failed. |
 
 `prompt_tokens` is the whole prompt; `prompt_tokens - cached_tokens` is what the backend actually processed.
 

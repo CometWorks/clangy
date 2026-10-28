@@ -1542,3 +1542,58 @@ async def test_tickets_go_to_vikunja_when_configured(chat, config):
         await bot.close()
     finally:
         vikunja.close()
+
+
+def refused(agent: "FakeAgent", spec: RunSpec) -> Awaitable[RunResult]:
+    async def step() -> RunResult:
+        await host(spec, "/v1/messages", {"messages": [{"role": "user", "content": spec.prompt}]})
+        spec.paths.session.write_text("refused turn\n")
+        return RunResult(error="The model refused to complete the request")
+
+    return step()
+
+
+@pytest.fixture
+async def claude_and_local(config, chat, backend, backend2):
+    """Claude (claude) first, the llama.cpp server (local) as its refusal fallback."""
+    config.backends = [
+        BackendConfig(name="claude", url=backend2.url, model="claude-sonnet-5-5", kind="anthropic"),
+        BackendConfig(name="local", url=backend.url, model="m", kind="llamacpp", priority=2, refusal_fallback=True),
+    ]
+    agent = FakeAgent()
+    clangy = Clangy(config, chat, run_agent=agent)
+    clangy.agent = agent  # type: ignore[attr-defined]
+    yield clangy
+    await clangy.close()
+
+
+async def test_refusal_is_answered_by_the_fallback_backend(claude_and_local, chat, backend2):
+    bot = claude_and_local
+    backend2.refuse = "cyber"
+    bot.agent.script = [refused, answer("Local answer.")]
+    await bot.on_message(forum_post(SUPPORT, 1300, "How do I patch this method?"))
+    await bot.wait_idle()
+    [progress] = chat.in_channel(1300)
+    assert progress.current.startswith("Local answer.")
+    first, second = metrics(bot, 1300)
+    assert first["backend"] == "claude" and first["refusal"] == "cyber" and not first["ok"]
+    assert not first["backend_failed"] and bot.backends["claude"].healthy, "a refusal isn't a backend failure"
+    assert second["backend"] == "local" and second["backend_switch"] == {"from": "claude", "reason": "refusal"}
+    assert "refused turn" not in (bot.conversation_dir(1300) / "work" / ".pi" / "session.jsonl").read_text()
+
+    backend2.refuse = None
+    await bot.on_message(message(1300, "@Clangy thanks", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
+    assert metrics(bot, 1300)[-1]["backend"] == "claude", "the next run goes back to the preferred backend"
+
+
+async def test_refusal_without_a_fallback_fails_the_run(claude_and_local, chat, backend2):
+    bot = claude_and_local
+    bot.backends["local"].healthy = False
+    bot.backends["local"].mark_failed(time.monotonic())
+    backend2.refuse = "bio"
+    bot.agent.script = [refused]
+    await bot.on_message(forum_post(SUPPORT, 1301, "Question"))
+    await bot.wait_idle()
+    assert len(metrics(bot, 1301)) == 1
+    assert chat.in_channel(1301)[0].current == text.failed(bot.chat.bot_name)
