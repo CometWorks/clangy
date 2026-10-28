@@ -154,7 +154,7 @@ class Config(Strict):
     """Caps the context on every backend. Defaults to the smallest backend context_window, so a conversation still
     fits after it moves to another backend."""
     headers: dict[str, str] = Field(default_factory=lambda: dict(PI_ATTRIBUTION))
-    """Sent with every backend's chat completion requests; a backend's own headers override single keys. OpenRouter
+    """Sent with every backend's model requests; a backend's own headers override single keys. OpenRouter
     serves some free models only to the agent harnesses it lists, so this names pi."""
     channels: list[ChannelConfig] = Field(default_factory=list)
     run_deadline: float = 600.0
