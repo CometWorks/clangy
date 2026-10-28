@@ -216,7 +216,7 @@ async def test_no_more_requests_after_a_failure(backend, tmp_path):
 
 
 def claude(url: str, **kwargs) -> BackendConfig:
-    return BackendConfig(name="claude", url=url, model="claude-sonnet-5", kind="anthropic", **kwargs)
+    return BackendConfig(name="claude", url=url, model="claude-sonnet-5-5", kind="anthropic", **kwargs)
 
 
 async def messages_once(backend_config: BackendConfig, tmp_path, headers: dict | None = None) -> tuple[ProxyRun, str]:
@@ -233,14 +233,15 @@ async def messages_once(backend_config: BackendConfig, tmp_path, headers: dict |
 
 async def test_anthropic_messages_with_key_version_and_usage(backend, tmp_path):
     pi_headers = {"x-api-key": "unused", "anthropic-version": "2023-06-01", "anthropic-beta": "some-beta"}
-    run, body = await messages_once(claude(backend.url, api_key="sk-ant-test"), tmp_path, pi_headers)
+    config = claude(backend.url, api_key="sk-ant-test", headers={"anthropic-beta": "config-beta"})
+    run, body = await messages_once(config, tmp_path, pi_headers)
     assert "Hello from the fake backend." in body
-    assert backend.requests[0]["model"] == "claude-sonnet-5"
+    assert backend.requests[0]["model"] == "claude-sonnet-5-5"
     headers = backend.headers[0]
     assert headers["x-api-key"] == "sk-ant-test" and "Authorization" not in headers
-    assert headers["anthropic-version"] == "2023-06-01" and headers["anthropic-beta"] == "some-beta"
+    assert headers["anthropic-version"] == "2023-06-01" and headers["anthropic-beta"] == "config-beta,some-beta"
     assert (run.stats.prompt_tokens, run.stats.cached_tokens, run.stats.completion_tokens) == (100, 80, 7)
-    assert run.stats.per_request[0]["model"] == "claude-sonnet-5" and not run.stats.backend_failed
+    assert run.stats.per_request[0]["model"] == "claude-sonnet-5-5" and not run.stats.backend_failed
 
 
 async def test_anthropic_pings_are_no_first_data(backend, tmp_path):

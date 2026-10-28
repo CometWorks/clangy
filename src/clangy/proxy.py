@@ -28,8 +28,7 @@ ToolHandler = Callable[[str, dict], Awaitable[str]]
 FAILED_STATUSES = {401, 402, 403, 404, 408, 429}
 """Besides 5xx: the backend can't serve now (key, credit or model unavailable, timeout, rate limit), unlike a
 request it rejects (400). Another backend may answer."""
-FORWARDED_HEADERS = ("anthropic-version", "anthropic-beta")
-"""pi's own Anthropic API version and betas, which the request body is written for."""
+ANTHROPIC_BETA = "anthropic-beta"
 MIN_SPEED_SAMPLE = 500
 """Prompt tokens a request must process to count as a speed sample."""
 
@@ -215,7 +214,12 @@ class HostServer:
             body["id_slot"] = run.slot
             body["cache_prompt"] = True
         headers = {"Content-Type": "application/json", **backend.headers, **run.backend.auth_headers()}
-        headers |= {name: request.headers[name] for name in FORWARDED_HEADERS if name in request.headers}
+        # pi's API version and betas, which its request body is written for; the config's betas are added
+        if version := request.headers.get("anthropic-version"):
+            headers["anthropic-version"] = version
+        betas = [headers.get(ANTHROPIC_BETA), request.headers.get(ANTHROPIC_BETA)]
+        if any(betas):
+            headers[ANTHROPIC_BETA] = ",".join(b for b in betas if b)
         anthropic = backend.kind == "anthropic"
         usage_from_event = _anthropic_usage_from_event if anthropic else _usage_from_event
         url = backend.url + request.path.removeprefix("/v1")

@@ -200,7 +200,18 @@ async def test_pi_fails_over_when_the_stream_breaks(tmp_path, backend, backend2,
 
 async def test_claude_run_with_tool_and_cached_prefix(tmp_path, backend, chat):
     assert PI is not None
-    claude = BackendConfig(name="claude", url=backend.url, model="claude-sonnet-5", kind="anthropic", api_key="k")
+    # As in deploy/clangy.toml
+    claude = BackendConfig(
+        name="claude",
+        url=backend.url,
+        model="claude-sonnet-5-5",
+        kind="anthropic",
+        api_key="k",
+        thinking="medium",
+        compat={"supportsMidConvoEffort": True},
+        extra_body={"fallbacks": "default"},
+        headers={"anthropic-beta": "server-side-fallback-2026-07-01"},
+    )
     config = Config(
         data_dir=tmp_path,
         backends=[claude],
@@ -210,23 +221,32 @@ async def test_claude_run_with_tool_and_cached_prefix(tmp_path, backend, chat):
     )
     backend.replies = [
         Reply(reasoning="Let me look.", tool="bash", arguments={"command": "echo hi"}),
-        Reply("Claude answer."),
+        Reply(reasoning="Easy.", text="Claude answer."),
+        Reply("Second answer."),
     ]
     bot = Clangy(config, chat)
     await bot.on_message(forum_post(SUPPORT, 2006, "My game crashes"))
     await bot.wait_idle()
+    await bot.on_message(message(2006, "@Clangy thanks", parent_id=SUPPORT, mentions_bot=True))
+    await bot.wait_idle()
     await bot.close()
     assert chat.in_channel(2006)[0].current.startswith("Claude answer.")
-    first, second = backend.requests
-    assert first["model"] == "claude-sonnet-5" and first["system"][0]["text"] == SYSTEM_PROMPT.read_text()
-    assert "temperature" not in first and first["thinking"] == {"type": "disabled"}
+    assert chat.in_channel(2006)[1].current.startswith("Second answer.")
+    first, second = backend.requests[:2]
+    assert first["model"] == "claude-sonnet-5-5" and first["system"][0]["text"] == SYSTEM_PROMPT.read_text()
+    assert "temperature" not in first and first["fallbacks"] == "default"
+    # Thinking blocks after the history edit by replace_answer are dropped instead of failing the request
+    assert first["thinking"]["block_binding"] == {"prefix_mismatch_behavior": "drop_block"}
+    assert first["messages"][-1] == {"role": "system", "content": [], "output_config": {"effort": "medium"}}
     assert all(h["x-api-key"] == "k" for h in backend.headers), "the key is added on the host"
+    betas = backend.headers[0]["anthropic-beta"].split(",")
+    assert {"server-side-fallback-2026-07-01", "thinking-binding-controls-2026-08-01"} <= set(betas)
     assert "cache_control" in json.dumps(first["messages"]), "pi marks the prefix for Anthropic's prompt cache"
-    call, result = second["messages"][-2:]
+    call, result = [m for m in second["messages"] if m["role"] != "system"][-2:]
     assert [b["type"] for b in call["content"]] == ["thinking", "tool_use"], "signed thinking goes back unchanged"
     assert result["content"][0]["tool_use_id"] == call["content"][1]["id"] == "toolu_1"
     run = json.loads((bot.conversation_dir(2006) / "metrics.jsonl").read_text().splitlines()[0])
-    assert run["prompt_tokens"] == 200 and run["requests"][0]["model"] == "claude-sonnet-5"
+    assert run["prompt_tokens"] == 200 and run["requests"][0]["model"] == "claude-sonnet-5-5"
 
 
 async def test_session_moves_between_qwen_and_claude(tmp_path, backend, backend2, chat):
@@ -235,7 +255,7 @@ async def test_session_moves_between_qwen_and_claude(tmp_path, backend, backend2
         data_dir=tmp_path,
         backends=[
             BackendConfig(name="local", url=backend.url, model="m", kind="llamacpp"),
-            BackendConfig(name="claude", url=backend2.url, model="claude-sonnet-5", kind="anthropic", priority=2),
+            BackendConfig(name="claude", url=backend2.url, model="claude-sonnet-5-5", kind="anthropic", priority=2),
         ],
         channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True)],
         sandbox=SandboxConfig(firejail=False, path=os.environ["PATH"]),
@@ -275,7 +295,7 @@ async def test_claude_overloaded_fails_over(tmp_path, backend, backend2, chat):
     config = Config(
         data_dir=tmp_path,
         backends=[
-            BackendConfig(name="claude", url=backend.url, model="claude-sonnet-5", kind="anthropic"),
+            BackendConfig(name="claude", url=backend.url, model="claude-sonnet-5-5", kind="anthropic"),
             BackendConfig(name="local", url=backend2.url, model="m", kind="llamacpp", priority=2),
         ],
         channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True)],

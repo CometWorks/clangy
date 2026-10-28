@@ -56,7 +56,7 @@ def test_pi_config_points_at_the_bridge(tmp_path):
 
 def test_anthropic_backend_talks_messages_to_the_bridge(tmp_path):
     paths = RunPaths(tmp_path)
-    claude = BackendConfig(name="c", url="https://api.anthropic.com/v1", model="claude-sonnet-5", kind="anthropic")
+    claude = BackendConfig(name="c", url="https://api.anthropic.com/v1", model="claude-sonnet-5-5", kind="anthropic")
     write_pi_config(paths, claude, 4321, 131072)
     provider = json.loads((paths.agent_dir / "models.json").read_text())["providers"]["clangy"]
     assert provider["api"] == "anthropic-messages" and provider["baseUrl"] == "http://127.0.0.1:4321"
