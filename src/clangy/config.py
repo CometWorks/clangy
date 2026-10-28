@@ -19,7 +19,7 @@ class Strict(BaseModel):
 class BackendConfig(Strict):
     name: str
     url: str
-    """OpenAI compatible base URL, including the `/v1` suffix."""
+    """Base URL including the `/v1` suffix: OpenAI compatible, or https://api.anthropic.com/v1 for kind anthropic."""
     model: str
     api_key: str | None = None
     """Used when set, otherwise the api_key_env variable. Keep the file readable only by the bot."""
@@ -27,7 +27,8 @@ class BackendConfig(Strict):
     parallel: int = 1
     priority: int = 1
     """Lower is preferred. A backend gets runs only while every more preferred one has failed or is fully busy."""
-    kind: Literal["openai", "llamacpp"] = "openai"
+    kind: Literal["openai", "llamacpp", "anthropic"] = "openai"
+    """anthropic: pi talks the Anthropic Messages API, which keeps Claude's prompt caching and thinking."""
     slot_save: bool = False
     """llama.cpp only: save/restore slot KV caches, needs `--slot-save-path` on the server."""
     context_window: int = 131072
@@ -40,9 +41,9 @@ class BackendConfig(Strict):
     prompt_tps: float = 300.0
     gen_tps: float = 40.0
     extra_body: dict[str, Any] = Field(default_factory=dict)
-    """Merged into every chat completion request, e.g. OpenRouter's `models` and `provider`."""
+    """Merged into every model request, e.g. OpenRouter's `models` and `provider`."""
     headers: dict[str, str] = Field(default_factory=dict)
-    """Sent with every chat completion request, over the top-level headers."""
+    """Sent with every model request, over the top-level headers."""
     first_byte_timeout: float | None = None
     """A request fails if no data arrives for this long. Not for llama.cpp, it's silent while reading a prompt."""
     stall_timeout: float | None = None

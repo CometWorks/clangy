@@ -58,6 +58,26 @@ compat = { thinkingFormat = "qwen-chat-template" }
 prompt_tps = 350.0
 gen_tps = 50.0
 
+# Claude Sonnet 5 on the Anthropic API, next after the llama.cpp server. The key goes into api_key (keep this file
+# mode 600) or the environment variable named by api_key_env.
+# [[backends]]
+# name = "claude-sonnet"
+# url = "https://api.anthropic.com/v1"
+# kind = "anthropic"
+# model = "claude-sonnet-5"
+# # api_key = "sk-ant-..."   # or api_key_env = "ANTHROPIC_API_KEY"
+# priority = 6
+# parallel = 2
+# context_window = 167936
+# max_tokens = 8192
+# images = true
+# thinking = "low"         # adaptive thinking at effort low; "off" turns it off
+# prompt_tps = 3000.0
+# gen_tps = 80.0
+# first_byte_timeout = 60
+# stall_timeout = 60
+# cooldown = 60
+
 # OpenRouter's free models as a second backend. The key goes into api_key (keep this file mode 600) or the
 # environment variable named by api_key_env. Free models: 20 requests a minute and 1000 a day per account.
 # [[backends]]

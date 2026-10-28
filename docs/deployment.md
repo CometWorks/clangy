@@ -62,7 +62,7 @@ uv hardlinks the sandboxes' packages from its cache in `~/.cache/uv`. The sandbo
 ## Requirements
 
 - firejail, pandoc and zip (`sudo apt install firejail pandoc zip`). The sandbox uses pandoc, zip and the other archive tools from `/usr/bin`. Without a working sandbox `clangy run` refuses to start, with exit status 78, which the unit doesn't restart on.
-- The backends reachable from the host (`polaris:8080`, and `openrouter.ai` if the OpenRouter backend is enabled).
+- The backends reachable from the host (`polaris:8080`, `openrouter.ai` if an OpenRouter backend is enabled, `api.anthropic.com` for Claude).
 - Optionally squid, see Proxy.
 
 ## Proxy
@@ -108,7 +108,7 @@ Notes go into the Kanban board's Notes bucket (id 36), apart from the tickets' T
 
 ## Run
 
-Set `discord_token` in `~/clangy.toml` and the channels to serve. For the OpenRouter backends (the free models and the paid fallback), uncomment them in `~/clangy.toml` and put the key into their `api_key`; the unit has no environment file. Then on the host:
+Set `discord_token` in `~/clangy.toml` and the channels to serve. For the OpenRouter backends (the free models and the paid fallback) and Claude, uncomment them in `~/clangy.toml` and put the key into their `api_key`; the unit has no environment file. Then on the host:
 
 ```bash
 systemctl --user start clangy

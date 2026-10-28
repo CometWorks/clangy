@@ -10,6 +10,8 @@ from clangy.config import BackendConfig
 
 log = logging.getLogger(__name__)
 
+ANTHROPIC_VERSION = "2023-06-01"
+"""Sent where pi doesn't send its own, e.g. by health checks."""
 EMA_WEIGHT = 0.3
 DEFAULT_RUN_SECONDS = 60.0
 
@@ -40,6 +42,13 @@ class Backend:
         if self.config.api_key:
             return self.config.api_key
         return os.environ.get(self.config.api_key_env) if self.config.api_key_env else None
+
+    def auth_headers(self) -> dict[str, str]:
+        if not self.api_key:
+            return {}
+        if self.config.kind == "anthropic":
+            return {"x-api-key": self.api_key, "anthropic-version": ANTHROPIC_VERSION}
+        return {"Authorization": f"Bearer {self.api_key}"}
 
     def available(self, now: float) -> bool:
         """Whether runs may use it. llama.cpp comes back with a passed health check, other kinds after a cooldown:
@@ -106,10 +115,9 @@ class Backend:
         return queued + max(tokens, self.run_seconds)
 
     async def check_health(self, session: aiohttp.ClientSession) -> bool:
-        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         try:
             async with session.get(
-                f"{self.config.url}/models", headers=headers, timeout=aiohttp.ClientTimeout(10)
+                f"{self.config.url}/models", headers=self.auth_headers(), timeout=aiohttp.ClientTimeout(10)
             ) as r:
                 self.healthy = r.status < 500
         except (aiohttp.ClientError, TimeoutError):

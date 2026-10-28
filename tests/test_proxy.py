@@ -213,3 +213,44 @@ async def test_no_more_requests_after_a_failure(backend, tmp_path):
     run, replies = await chat_once(cloud(backend.url), tmp_path, requests=2)
     assert [status for status, _ in replies] == [429, 502]
     assert len(backend.requests) == 1
+
+
+def claude(url: str, **kwargs) -> BackendConfig:
+    return BackendConfig(name="claude", url=url, model="claude-sonnet-5", kind="anthropic", **kwargs)
+
+
+async def messages_once(backend_config: BackendConfig, tmp_path, headers: dict | None = None) -> tuple[ProxyRun, str]:
+    async with aiohttp.ClientSession() as http:
+        run = ProxyRun(backend=Backend(backend_config), session=http, tools=tools)
+        async with HostServer(run, tmp_path / "host.sock"):
+            with short_path(tmp_path / "host.sock") as short:
+                connector = aiohttp.UnixConnector(path=short)
+                async with aiohttp.ClientSession(connector=connector) as sandbox:
+                    body = {"model": "clangy", "messages": []}
+                    async with sandbox.post("http://host/v1/messages", json=body, headers=headers) as r:
+                        return run, await r.text()
+
+
+async def test_anthropic_messages_with_key_version_and_usage(backend, tmp_path):
+    pi_headers = {"x-api-key": "unused", "anthropic-version": "2023-06-01", "anthropic-beta": "some-beta"}
+    run, body = await messages_once(claude(backend.url, api_key="sk-ant-test"), tmp_path, pi_headers)
+    assert "Hello from the fake backend." in body
+    assert backend.requests[0]["model"] == "claude-sonnet-5"
+    headers = backend.headers[0]
+    assert headers["x-api-key"] == "sk-ant-test" and "Authorization" not in headers
+    assert headers["anthropic-version"] == "2023-06-01" and headers["anthropic-beta"] == "some-beta"
+    assert (run.stats.prompt_tokens, run.stats.cached_tokens, run.stats.completion_tokens) == (100, 80, 7)
+    assert run.stats.per_request[0]["model"] == "claude-sonnet-5" and not run.stats.backend_failed
+
+
+async def test_anthropic_pings_are_no_first_data(backend, tmp_path):
+    backend.stall_first = 1.0
+    run, body = await messages_once(claude(backend.url, first_byte_timeout=0.3), tmp_path)
+    assert run.stats.backend_failed
+    assert body.endswith('"}}\n\n') and "event: error\n" in body, "pi's Anthropic SDK reads only named error events"
+
+
+async def test_anthropic_overloaded_inside_the_stream_fails(backend, tmp_path):
+    backend.stream_error = True
+    run, _ = await messages_once(claude(backend.url), tmp_path)
+    assert run.stats.backend_failed and "overloaded_error" in run.stats.per_request[0]["error"]

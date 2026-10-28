@@ -62,6 +62,12 @@ async def test_health_check(backend):
         assert not b.healthy
 
 
+async def test_anthropic_health_check_sends_its_key_header():
+    b = Backend(config(kind="anthropic", api_key="sk-ant-test"))
+    assert b.auth_headers() == {"x-api-key": "sk-ant-test", "anthropic-version": "2023-06-01"}
+    assert Backend(config(api_key="sk-or")).auth_headers() == {"Authorization": "Bearer sk-or"}
+
+
 async def test_cloud_backend_returns_after_its_cooldown():
     backend = Backend(config(cooldown=60))
     backend.mark_failed(now=100.0)
