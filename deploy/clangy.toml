@@ -179,6 +179,11 @@ mode = "mention"
 id = 1416689601585741874
 mode = "mention"
 
+# Text channel (SE-942): a mention starts a thread with Clangy
+[[channels]]
+id = 1566060423046762516
+mode = "mention"
+
 # Pulsar server: support forum, answers new threads once they have been quiet for 2 minutes
 [[channels]]
 id = 1382752317106950206
