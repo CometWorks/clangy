@@ -133,6 +133,8 @@ The failed backend is marked unavailable and the run starts again right away on 
 
 A model's refusal (Claude's `stop_reason` `refusal`) isn't a backend failure. The run is dropped the same way and repeated right away on the most preferred available backend marked `refusal_fallback`, which on the nas is polaris. The conversation goes back to its preferred backend on the next run. These moves count toward the same limit as failovers. Without a fallback the run fails like any other.
 
+A model that uses up `max_tokens` before it writes any answer text (pi's `stopReason` `length`, typically a thinking model that is still thinking) is treated the same way, except that any other available backend can take over, the most preferred first. The backend isn't marked failed.
+
 Only runs after such a wait are retries. They count up to `max_retries` from the last mention or answer. After the last failure Clangy asks the user to mention it, and there are no more automatic retries. The conversations to retry come from the persisted state, so this also works across restarts.
 
 A llama.cpp slot owned by a conversation that moved away is simply taken over by the next one.
@@ -263,7 +265,7 @@ Every run, answered or not, appends one JSON line to its conversation's `metrics
 |---|---|
 | `time`, `thread_id`, `channel_id`, `game`, `backend`, `model`, `run` | When and where. `model` is the configured one; `run` counts the conversation's answered runs. |
 | `answered_by` | The models that actually answered the run's requests, from the stream's `model` field. With OpenRouter's `models` list these can differ from `model`, even within one run. |
-| `backend_switch` | Present when the run moved the conversation: `from` (null for a new conversation) and `reason` (`new`, `failure`, `priority` or `balance`). |
+| `backend_switch` | Present when the run moved the conversation: `from` (null for a new conversation) and `reason` (`new`, `failure`, `takeover` after a refusal or a cut-off answer, `priority` or `balance`). |
 | `ok`, `timed_out`, `backend_failed`, `refusal`, `error` | Outcome. `refusal` is the category of a model's refusal, `error` holds pi's error or exit status. |
 | `answer_chars`, `tools`, `steps` | Answer length, the tools called in order, model turns. |
 | `predicted_seconds`, `queue_seconds`, `run_seconds`, `total_seconds` | The ETA at trigger time, the wait for the backend, the run itself, and trigger to answer. |

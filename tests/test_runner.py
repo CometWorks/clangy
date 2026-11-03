@@ -87,6 +87,10 @@ def test_final_result():
     error = {"role": "assistant", "content": [], "stopReason": "error", "errorMessage": "502"}
     assert final_result(end(error)).error == "502"
     assert final_result(end({"role": "assistant", "content": []})).error == "empty answer"
+    thought = {"role": "assistant", "content": [{"type": "thinking", "thinking": "hm"}], "stopReason": "length"}
+    assert final_result(end(thought)).cut_off
+    truncated = {"role": "assistant", "content": [{"type": "text", "text": "Half an"}], "stopReason": "length"}
+    assert final_result(end(truncated)).answer == "Half an"
 
 
 def fake_pi(tmp_path: Path, body: str) -> SandboxConfig:

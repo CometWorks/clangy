@@ -1578,7 +1578,7 @@ async def test_refusal_is_answered_by_the_fallback_backend(claude_and_local, cha
     first, second = metrics(bot, 1300)
     assert first["backend"] == "claude" and first["refusal"] == "cyber" and not first["ok"]
     assert not first["backend_failed"] and bot.backends["claude"].healthy, "a refusal isn't a backend failure"
-    assert second["backend"] == "local" and second["backend_switch"] == {"from": "claude", "reason": "refusal"}
+    assert second["backend"] == "local" and second["backend_switch"] == {"from": "claude", "reason": "takeover"}
     assert "refused turn" not in (bot.conversation_dir(1300) / "work" / ".pi" / "session.jsonl").read_text()
 
     backend2.refuse = None
@@ -1597,3 +1597,42 @@ async def test_refusal_without_a_fallback_fails_the_run(claude_and_local, chat, 
     await bot.wait_idle()
     assert len(metrics(bot, 1301)) == 1
     assert chat.in_channel(1301)[0].current == text.failed(bot.chat.bot_name)
+
+
+def cut_off(agent: "FakeAgent", spec: RunSpec) -> Awaitable[RunResult]:
+    """A model that thought until max_tokens and wrote no answer."""
+
+    async def step() -> RunResult:
+        spec.paths.session.write_text("cut-off turn\n")
+        return RunResult(error="max_tokens reached before an answer", cut_off=True)
+
+    return step()
+
+
+async def test_cut_off_answer_goes_to_another_backend(config, chat, backend, backend2):
+    config.backends = [
+        BackendConfig(name="local", url=backend.url, model="m", kind="llamacpp"),
+        BackendConfig(name="other", url=backend2.url, model="m", kind="llamacpp", priority=2),
+    ]
+    bot = Clangy(config, chat, run_agent=FakeAgent())
+    bot.run_agent.script = [cut_off, answer("Other answer.")]
+    await bot.on_message(forum_post(SUPPORT, 1302, "Question"))
+    await bot.wait_idle()
+    [progress] = chat.in_channel(1302)
+    assert progress.current.startswith("Other answer.")
+    first, second = metrics(bot, 1302)
+    assert first["backend"] == "local" and not first["ok"] and not first["backend_failed"]
+    assert bot.backends["local"].healthy, "running out of output tokens isn't a backend failure"
+    assert second["backend"] == "other" and second["backend_switch"] == {"from": "local", "reason": "takeover"}
+    assert "cut-off turn" not in (bot.conversation_dir(1302) / "work" / ".pi" / "session.jsonl").read_text()
+    await bot.close()
+
+
+async def test_cut_off_answer_without_another_backend_fails_the_run(config, chat):
+    bot = Clangy(config, chat, run_agent=FakeAgent())
+    bot.run_agent.script = [cut_off]
+    await bot.on_message(forum_post(SUPPORT, 1303, "Question"))
+    await bot.wait_idle()
+    assert len(metrics(bot, 1303)) == 1
+    assert chat.in_channel(1303)[0].current == text.failed(bot.chat.bot_name)
+    await bot.close()

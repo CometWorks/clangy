@@ -134,8 +134,8 @@ class Conversation(BaseModel):
     failovers: int = 0
     """Runs moved to another backend right after a failure, since the last retry, mention or answer."""
     runs: int = 0
-    refusal_fallback: str = ""
-    """The backend the next run goes to because the model of this one refused it."""
+    takeover: str = ""
+    """The backend the next run goes to because the model of this one refused it or was cut off."""
     host_notes: list[str] = Field(default_factory=list)
     known: dict[int, KnownMessage] = Field(default_factory=dict)
     sent_files: list[str] = Field(default_factory=list)
@@ -793,9 +793,9 @@ class Clangy:
         if not available:
             return None, None
         current = self.backends.get(conv.backend)
-        fallback, conv.refusal_fallback = self.backends.get(conv.refusal_fallback), ""
-        if fallback in available:
-            return fallback, "refusal"
+        takeover, conv.takeover = self.backends.get(conv.takeover), ""
+        if takeover in available:
+            return takeover, "takeover"
 
         def eta(backend: Backend) -> float:
             tokens = new_tokens if backend is current else conv.context_tokens + new_tokens
@@ -851,13 +851,15 @@ class Clangy:
         shutil.rmtree(outbox.staging, ignore_errors=True)
         self._restore_session(conv)
         now = time.monotonic()
-        fallbacks = [
-            b for b in self.backends.values() if b.config.refusal_fallback and b is not backend and b.available(now)
-        ]
-        if stats.refusal and fallbacks and conv.failovers < len(self.backends) - 1:
-            # The model refused; a fallback model gets the same turn right away, the refusal isn't posted
-            conv.refusal_fallback = min(fallbacks, key=lambda b: b.config.priority).name
-            log.info("Backend %s refused (%s), %s takes over", backend.name, stats.refusal, conv.refusal_fallback)
+        takers = [b for b in self.backends.values() if b is not backend and b.available(now)]
+        if stats.refusal:
+            takers = [b for b in takers if b.config.refusal_fallback]
+        if (stats.refusal or result.cut_off) and takers and conv.failovers < len(self.backends) - 1:
+            # The model refused, or used up max_tokens before answering (Qwen can think that long). Another model
+            # gets the same turn right away, the failed run isn't posted.
+            conv.takeover = min(takers, key=lambda b: b.config.priority).name
+            why = f"refused ({stats.refusal})" if stats.refusal else "reached max_tokens before an answer"
+            log.info("Backend %s %s, %s takes over", backend.name, why, conv.takeover)
             conv.failovers += 1
             self.save(conv)
             self.trigger(conv)

@@ -51,7 +51,7 @@ kind = "llamacpp"
 priority = 5
 parallel = 1
 context_window = 167936
-max_tokens = 4096
+max_tokens = 16384    # Qwen's thinking alone can take 4096
 images = true          # llama.cpp loads the vision projector (--mmproj)
 thinking = "minimal"
 compat = { thinkingFormat = "qwen-chat-template" }
