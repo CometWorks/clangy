@@ -337,3 +337,27 @@ async def test_claude_refusal_goes_to_the_local_model(tmp_path, backend, backend
     assert "Refused text" not in json.dumps(backend2.requests[0]["messages"]), "the refused turn is dropped"
     first = json.loads((bot.conversation_dir(2009) / "metrics.jsonl").read_text().splitlines()[0])
     assert first["refusal"] == "cyber" and first["backend"] == "claude"
+
+
+async def test_answer_cut_off_by_max_tokens_goes_to_another_backend(tmp_path, backend, backend2, chat):
+    assert PI is not None
+    config = Config(
+        data_dir=tmp_path,
+        backends=[
+            BackendConfig(name="local", url=backend.url, model="m", kind="llamacpp", thinking="minimal"),
+            BackendConfig(name="other", url=backend2.url, model="m", kind="llamacpp", priority=2),
+        ],
+        channels=[ChannelConfig(id=SUPPORT, mode="support", initial_response=True)],
+        sandbox=SandboxConfig(firejail=False, path=os.environ["PATH"]),
+        run_deadline=60,
+    )
+    backend.replies = [Reply(reasoning="Still thinking about it", finish="length")]
+    backend2.replies = [Reply("Answer from the other model.")]
+    bot = Clangy(config, chat)
+    await bot.on_message(forum_post(SUPPORT, 2010, "Why can't Pulsar find .NET?"))
+    await bot.wait_idle()
+    await bot.close()
+    assert chat.in_channel(2010)[0].current.startswith("Answer from the other model.")
+    assert "Still thinking" not in json.dumps(backend2.requests[0]["messages"]), "the cut-off turn is dropped"
+    first = json.loads((bot.conversation_dir(2010) / "metrics.jsonl").read_text().splitlines()[0])
+    assert first["backend"] == "local" and first["error"] == "max_tokens reached before an answer"

@@ -27,6 +27,8 @@ class Reply:
     reasoning: str = ""
     tool: str | None = None
     arguments: dict = field(default_factory=dict)
+    finish: str | None = None
+    """OpenAI finish_reason in place of stop or tool_calls, e.g. length."""
 
 
 class FakeBackend:
@@ -128,7 +130,9 @@ class FakeBackend:
             await response.write(sse({**chunk, "choices": [{"index": 0, "delta": thought, "finish_reason": None}]}))
         await response.write(sse({**chunk, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]}))
         await asyncio.sleep(self.stall_mid)
-        await response.write(sse({**chunk, "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}))
+        await response.write(
+            sse({**chunk, "choices": [{"index": 0, "delta": {}, "finish_reason": reply.finish or finish}]})
+        )
         usage = {
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": 7,

@@ -78,6 +78,8 @@ class RunResult:
     answer: str | None = None
     error: str | None = None
     timed_out: bool = False
+    cut_off: bool = False
+    """The model reached max_tokens before it wrote any answer, e.g. while thinking."""
     tools: list[str] = field(default_factory=list)
     """Tools called during the run, in order."""
 
@@ -189,7 +191,11 @@ def final_result(event: dict) -> RunResult:
     text = "\n".join(c["text"] for c in last.get("content", []) if c.get("type") == "text")
     # With reasoning off, a model may still write its reasoning into the answer, ended by a stray tag
     text = text.rpartition("</think>")[2].strip()
-    return RunResult(answer=text) if text else RunResult(error="empty answer")
+    if text:
+        return RunResult(answer=text)
+    if last.get("stopReason") == "length":
+        return RunResult(error="max_tokens reached before an answer", cut_off=True)
+    return RunResult(error="empty answer")
 
 
 def replace_answer(session: Path, answer: str) -> None:
