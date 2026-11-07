@@ -22,6 +22,6 @@ uv run clangy run                    # token in config.toml or DISCORD_TOKEN
 
 ## License
 
-AGPL-3.0, see [LICENSE](LICENSE). Code from before 2026-11-07 was MIT licensed, see [LICENSE-MIT](LICENSE-MIT).
+AGPL-3.0, see [LICENSE](LICENSE).
 
 Please contact us for alternate licensing.
