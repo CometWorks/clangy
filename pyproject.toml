@@ -2,6 +2,7 @@
 name = "clangy"
 version = "0.1.0"
 description = "Clangy v2, the support bot of the Pulsar Discord server"
+license = "AGPL-3.0-only"
 authors = [
     { name = "Viktor Ferenczi", email = "viktor@ferenczi.eu" }
 ]

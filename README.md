@@ -19,3 +19,9 @@ uv run clangy run                    # token in config.toml or DISCORD_TOKEN
 - [Configuration](docs/configuration.md)
 - [Deployment](docs/deployment.md): systemd service on the nas, `deploy/deploy.sh`, commands
 - [Testing](docs/testing.md)
+
+## License
+
+AGPL-3.0, see [LICENSE](LICENSE).
+
+Please contact us for alternate licensing.
