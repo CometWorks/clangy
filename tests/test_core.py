@@ -1807,3 +1807,55 @@ async def test_author_is_not_pinged_when_the_run_fails(bot, chat, tmp_path):
     await bot.on_message(message(1033, "@Clangy retry", parent_id=SUPPORT, mentions_bot=True))
     await bot.wait_idle()
     assert all(m.ping is None for m in chat.in_channel(1033))
+
+
+async def test_author_is_not_pinged_for_a_withheld_answer(bot, chat, tmp_path):
+    hub_entry(tmp_path, "a", "owner/plugin", "https://discord.com/users/777")
+    ask = {"repo": "owner/plugin", "severity": "question", "reason": "How does it save?"}
+    bot.agent.script = [tool("contact_author", ask, answer("See knowledge/books/secret.md"))]
+    await bot.on_message(forum_post(SUPPORT, 1046, "Plugin question"))
+    await bot.wait_idle()
+    [reply] = chat.in_channel(1046)
+    assert reply.current.startswith(text.refused()) and reply.ping is None
+
+
+async def test_ping_reason_with_a_secret_marker_is_withheld(bot, chat, tmp_path):
+    hub_entry(tmp_path, "a", "owner/plugin", "https://discord.com/users/777")
+    ask = {"repo": "owner/plugin", "severity": "question", "reason": "It's in knowledge/books/secret.md"}
+    bot.agent.script = [tool("contact_author", ask, answer("Not documented."))]
+    await bot.on_message(forum_post(SUPPORT, 1047, "Plugin question"))
+    await bot.wait_idle()
+    assert [m.ping for m in chat.in_channel(1047)] == [None]
+    assert bot.conversations[1047].pinged_repos == []
+
+
+@pytest.mark.parametrize("hours, pinged", [(12.0, [777]), (0.0, [777, 777])])
+async def test_author_is_pinged_from_one_thread_per_cooldown(bot, chat, tmp_path, hours, pinged):
+    bot.config.author_ping_hours = hours
+    hub_entry(tmp_path, "a", "owner/plugin", "https://discord.com/users/777")
+    ask = {"repo": "owner/plugin", "severity": "bug", "reason": "How does it save?"}
+    bot.agent.script = [tool("contact_author", ask, answer("First.")), tool("contact_author", ask, answer("Second."))]
+    for thread in (1048, 1049):
+        await bot.on_message(forum_post(SUPPORT, thread, "Plugin question"))
+        await bot.wait_idle()
+    assert [m.ping for m in chat.messages.values() if m.ping] == pinged
+    assert ("another thread" in bot.agent.tool_results[1][1]["text"]) == (len(pinged) == 1)
+
+
+async def test_failed_ping_is_logged_and_keeps_the_answer(bot, chat, tmp_path, caplog):
+    hub_entry(tmp_path, "a", "owner/plugin", "https://discord.com/users/777")
+    ask = {"repo": "owner/plugin", "severity": "question", "reason": "How does it save?"}
+    bot.agent.script = [tool("contact_author", ask, answer("Not documented."))]
+    send = chat.send
+
+    async def failing_send(channel_id, content, files=None, ping=None):
+        if ping:
+            raise RuntimeError("Discord said no")
+        return await send(channel_id, content, files)
+
+    chat.send = failing_send
+    await bot.on_message(forum_post(SUPPORT, 1050, "Plugin question"))
+    await bot.wait_idle()
+    [reply] = chat.in_channel(1050)
+    assert reply.current.startswith("Not documented.") and "Couldn't ping" in caplog.text
+    assert bot.conversations[1050].status == "idle"

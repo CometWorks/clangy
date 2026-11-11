@@ -178,6 +178,8 @@ class Config(Strict):
     hubs: list[Path] = Field(default_factory=list)
     """Clones of the plugin hubs, each with a `Plugins` folder of XML files. The <Support> link in a plugin's entry
     says how to reach its author, see the `contact_author` tool."""
+    author_ping_hours: float = Field(12.0, ge=0)
+    """A plugin author pinged from one thread isn't pinged from another for this long."""
     hidden_skills: list[str] = Field(default_factory=list)
     """Skills left out of the list the model gets, e.g. ones that need tools the sandbox lacks. Their files stay
     readable."""

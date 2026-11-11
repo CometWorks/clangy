@@ -159,6 +159,8 @@ class Conversation(BaseModel):
     """Plugin authors the running answer asked for, posted after it. A run that fails drops them."""
     pinged_repos: list[str] = Field(default_factory=list)
     """Lowercase repositories whose author was already pinged in this thread, each at most once."""
+    pinged_at: dict[int, datetime] = Field(default_factory=dict)
+    """When each plugin author was last pinged from this thread, by Discord user ID."""
 
     @property
     def key(self) -> str:
@@ -863,7 +865,10 @@ class Clangy:
             attachments = outbox.commit(self.files_dir(conv.thread_id) / "sent" / f"{conv.runs:04d}")
             conv.sent_files = sorted(outbox.sent)
             self.save(conv)
-            await self._post_answer(conv, self._guard(self._drop_echo(conv, result.answer)), attachments)
+            answer = self._guard(self._drop_echo(conv, result.answer))
+            if answer == text.refused():
+                conv.author_pings.clear()  # Nobody is asked to look at a withheld answer
+            await self._post_answer(conv, answer, attachments)
             return
         shutil.rmtree(outbox.staging, ignore_errors=True)
         self._restore_session(conv)
@@ -1168,6 +1173,11 @@ class Clangy:
         key = repo.strip().lower()
         if key in conv.pinged_repos or any(p.repo == key for p in conv.author_pings):
             return f"The author was already asked in this thread.{note}"
+        if self._pinged_recently(contact.user_id):
+            return (
+                "Nobody is pinged; the author was asked about another thread a short while ago. Point the player to "
+                f"the plugin's GitHub issues page.{note}"
+            )
         conv.author_pings.append(AuthorPing(repo=key, discord_id=contact.user_id, reason=reason))
         self.save(conv)
         return f"The author will be pinged after your answer.{note}"
@@ -1227,12 +1237,20 @@ class Clangy:
             replace_answer(RunPaths(self._work_dir(conv)).session, kept)
         return kept
 
+    def _leaks(self, content: str) -> bool:
+        lowered = content.lower()
+        return any(marker.lower() in lowered for marker in self.config.secret_markers)
+
     def _guard(self, answer: str) -> str:
-        lowered = answer.lower()
-        if any(marker.lower() in lowered for marker in self.config.secret_markers):
+        if self._leaks(answer):
             log.warning("Answer withheld, it mentioned a secret marker")
             return text.refused()
         return answer
+
+    def _pinged_recently(self, discord_id: int) -> bool:
+        """Whether any thread pinged this author within author_ping_hours."""
+        since = datetime.now(timezone.utc) - timedelta(hours=self.config.author_ping_hours)
+        return any(c.pinged_at.get(discord_id, since) > since for c in self.conversations.values())
 
     async def _show(self, conv: Conversation, content: str, files: list[Path] | None = None) -> None:
         if conv.progress_message_id is None:
@@ -1265,9 +1283,21 @@ class Clangy:
         """Mentions in an edit don't notify, so each ping is a new message after the answer."""
         for ping in list(conv.author_pings):
             conv.author_pings.remove(ping)
-            conv.pinged_repos.append(ping.repo)
+            content = text.author_ping(ping.discord_id, ping.reason)
+            if self._leaks(content):
+                log.warning("Ping of %s's author withheld, it mentioned a secret marker", ping.repo)
+            elif self._pinged_recently(ping.discord_id):
+                log.info("Ping of %s's author skipped, another thread pinged them recently", ping.repo)
+            else:
+                conv.pinged_repos.append(ping.repo)
+                conv.pinged_at[ping.discord_id] = datetime.now(timezone.utc)
+                self.save(conv)
+                try:
+                    await self.chat.send(conv.thread_id, content, ping=ping.discord_id)
+                except Exception:
+                    log.exception("Couldn't ping %s's author in %s", ping.repo, conv.thread_id)
+                continue
             self.save(conv)
-            await self.chat.send(conv.thread_id, text.author_ping(ping.discord_id, ping.reason), ping=ping.discord_id)
 
     async def _update_progress(self, conv: Conversation, backend: Backend, progress: Progress, shown: str) -> None:
         while True:

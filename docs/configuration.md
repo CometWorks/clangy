@@ -22,6 +22,7 @@ Clangy reads a TOML file (`--config`, default `config.toml`). `config.example.to
 | `retention_days` | `30` | Conversations (all but `metrics.jsonl`) and records not touched for this long are deleted at startup. The message cache keeps two days at most. See design.md, Retention. |
 | `secret_markers` | book names, `knowledge/books` | Answers containing any of these (case-insensitive) are withheld. |
 | `hubs` | none | Clones of the plugin hubs, each with a `Plugins` folder of XML files (`deploy/sync-hub-plugins.py` keeps them in the plugin skills' `Data` folders). The `<Support>` link in a plugin's entry says how `contact_author` reaches its author, see Plugin support below. |
+| `author_ping_hours` | `12` | A plugin author pinged from one thread isn't pinged from another for this many hours; the tool tells the model to point the player to the plugin's issues instead. |
 | `hidden_skills` | none | Skill names left out of the skill list the model gets, e.g. ones that need tools the sandbox lacks. Their files stay readable. |
 
 ## `[sandbox]`
