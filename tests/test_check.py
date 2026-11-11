@@ -22,3 +22,20 @@ async def test_probe_checks_the_proxy(tmp_path, squid):
     squid.allowed.add("example.com")
     results = await probe_sandbox(config, tmp_path / "config.toml", tmp_path / "check2", network=False)
     assert not results["proxy blocks other sites"]
+
+
+async def test_silent_proxy_is_unreachable_not_a_broken_probe(tmp_path):
+    """At boot the proxy can't reach out yet; the probe must say so instead of crashing."""
+    import socket
+
+    from clangy.check import probe_sandbox
+    from clangy.config import SandboxConfig
+
+    with socket.create_server(("127.0.0.1", 0)) as silent:
+        sandbox = SandboxConfig(firejail=False, path="/usr/bin:/bin", proxy=f"127.0.0.1:{silent.getsockname()[1]}")
+        config = Config(
+            data_dir=tmp_path, backends=[BackendConfig(name="b", url="http://x/v1", model="m")], sandbox=sandbox
+        )
+        results = await probe_sandbox(config, tmp_path / "config.toml", tmp_path / "check", network=False, timeout=1)
+    assert results["proxy reachable"] is False
+    assert results["proxy blocks other sites"]
