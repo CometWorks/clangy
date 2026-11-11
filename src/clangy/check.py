@@ -33,10 +33,13 @@ for tool in ("pi", "node", "python3"):
 
 def status(host):
     with socket.socket(socket.AF_UNIX) as s:
-        s.settimeout(30)
-        s.connect(proxy_socket)
-        s.sendall(f"CONNECT {host}:443 HTTP/1.1\\r\\nHost: {host}:443\\r\\n\\r\\n".encode())
-        return s.recv(200).split(b"\\r\\n")[0].split()[1:2]
+        s.settimeout(timeout)
+        try:
+            s.connect(proxy_socket)
+            s.sendall(f"CONNECT {host}:443 HTTP/1.1\\r\\nHost: {host}:443\\r\\n\\r\\n".encode())
+            return s.recv(200).split(b"\\r\\n")[0].split()[1:2]
+        except OSError:  # The proxy can't reach out yet, e.g. at boot before the network is up
+            return []
 
 if proxy_socket:
     result["proxy reachable"] = status("pypi.org") != []
@@ -72,7 +75,9 @@ class ConsoleChat:
         raise NotImplementedError
 
 
-async def probe_sandbox(config: Config, config_path: Path, base: Path, network: bool = True) -> dict[str, bool]:
+async def probe_sandbox(
+    config: Config, config_path: Path, base: Path, network: bool = True, timeout: float = 30
+) -> dict[str, bool]:
     """Runs a probe script instead of pi through the same sandbox command line."""
     work = base / "probe" / "work"
     work.mkdir(parents=True)
@@ -85,8 +90,8 @@ async def probe_sandbox(config: Config, config_path: Path, base: Path, network: 
     readable = [p.resolve() for p in sources]
     proxy_socket = str(RunPaths(work).proxy_socket.relative_to(work)) if config.sandbox.proxy else None
     code = (
-        f"work, hidden, readable, proxy_socket, check_network = {str(work)!r}, {hidden!r}, "
-        f"{[str(p) for p in readable]!r}, {proxy_socket!r}, {network!r}\n{PROBE}"
+        f"work, hidden, readable, proxy_socket, check_network, timeout = {str(work)!r}, {hidden!r}, "
+        f"{[str(p) for p in readable]!r}, {proxy_socket!r}, {network!r}, {timeout!r}\n{PROBE}"
     )
     sandbox = config.sandbox.model_copy(update={"pi_command": ["python3", "-c", code]})
     spec = RunSpec(paths=RunPaths(work), backend=config.backends[0], sandbox=sandbox, prompt="", read_only=readable)
