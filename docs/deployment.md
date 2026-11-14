@@ -158,7 +158,7 @@ ssh clangy@nas 'cat > ~/data/outbox/DIS-0017-fixed.tmp && mv ~/data/outbox/DIS-0
 
 Within 10 seconds it is in `~/data/outbox/sent/` with the message link, or in `~/data/outbox/failed/` with the error.
 
-To mark the ticket resolved, add `react: ✅` to the frontmatter: Clangy puts the reaction on the thread's first message and tags a forum post `Completed` (or `Done`). The file may then have no text.
+To mark the ticket resolved, add `react: ✅` to the frontmatter: Clangy puts the reaction on the thread's first message and tags a forum post `Completed` (or `Complete` or `Done`). The file may then have no text.
 
 ## Checks on the host
 

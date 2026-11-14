@@ -42,7 +42,7 @@ CACHE_AGE = timedelta(days=2)
 OUTBOX_INTERVAL = 10.0
 """Seconds between looks into the outbox."""
 DONE_EMOJI = "✅"
-DONE_TAGS = ("Completed", "Done")
+DONE_TAGS = ("Completed", "Complete", "Done")
 """Forum tags that mark a post resolved. The ✅ reaction from the outbox adds the first one the forum defines."""
 EMOJI_NAMES = {":white_check_mark:": DONE_EMOJI}
 
