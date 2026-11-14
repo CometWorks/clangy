@@ -1435,6 +1435,18 @@ async def test_failed_post_can_be_queued_again(bot, chat, monkeypatch):
     assert len(chat.in_channel(1166)) == 1
 
 
+async def test_queued_reaction_uses_the_complete_tag(bot, chat):
+    # Our support forum names its tag Complete
+    bot.store.create("ticket", "Crash", "Details", {"thread": thread_url(1180)})
+    chat.parents[1180] = QUIET_FORUM
+    chat.forum_tags[QUIET_FORUM] = ["Underway", "Complete", "Invalid"]
+    queue(bot, "DIS-0001-done", "DIS-0001", "", react="✅")
+    await bot.send_posts()
+    assert chat.applied_tags[1180] == ["Complete"]
+    meta, _ = frontmatter((bot.outbox / "sent" / "DIS-0001-done.md").read_text())
+    assert meta["tagged"] == "Complete"
+
+
 async def test_queued_reaction_marks_the_forum_post_done(bot, chat, config):
     bot.store.create("ticket", "Crash", "Details", {"thread": thread_url(1180)})
     chat.parents[1180] = QUIET_FORUM
