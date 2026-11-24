@@ -190,6 +190,11 @@ mode = "mention"
 id = 1566060423046762516
 mode = "mention"
 
+# Octahedron
+[[channels]]
+id = 1573456188480290958
+mode = "mention"
+
 # Pulsar server: support forum, answers new threads once they have been quiet for 2 minutes
 [[channels]]
 id = 1382752317106950206
